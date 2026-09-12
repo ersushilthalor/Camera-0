@@ -117,6 +117,7 @@ class CameraTrackingViewModel(application: Application) : AndroidViewModel(appli
         )
         cameraXManager = manager
         manager.setFps(_uiState.value.selectedFpsOption)
+        _uiState.update { it.copy(availableLenses = manager.getAvailableLenses()) }
         manager.startCamera(lens = _uiState.value.selectedLens)
     }
 
