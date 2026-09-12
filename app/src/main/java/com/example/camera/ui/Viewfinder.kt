@@ -90,52 +90,52 @@ fun Viewfinder(
                 cameraMode == CameraMode.DUAL_VIDEO)
 
         // Calculate layout geometry:
-        // In Video and Cinema modes, viewfinder extends vertically down to almost the top edge of the shutter button (~118dp from bottom)
+        // In Video and Cinema modes, viewfinder extends vertically down towards shutter clearance
         val shutterClearance = 118.dp
         val topClearance = 60.dp
-        val availableVideoHeight = (containerHeight - shutterClearance - topClearance).coerceAtLeast(100.dp)
-        val videoRatio = 16f / 9f
+        val maxAvailableHeight = if (isVideoLayout) {
+            (containerHeight - shutterClearance - topClearance).coerceAtLeast(100.dp)
+        } else {
+            containerHeight
+        }
 
-        // Determine exact aspect ratio from active preview buffer size (if available) or target mode ratio
-        val streamRatio = if (previewBufferSize != null && previewBufferSize.height > 0 && previewBufferSize.width > 0) {
+        // Expected aspect ratio for current mode (portrait display: height / width)
+        val targetModeRatio = when (cameraMode) {
+            CameraMode.VIDEO, CameraMode.CINEMA, CameraMode.DOLLY_ZOOM, CameraMode.DUAL_VIDEO -> {
+                if (aspectRatio > 1.4f) aspectRatio else (16f / 9f)
+            }
+            CameraMode.PHOTO, CameraMode.PORTRAIT, CameraMode.NIGHT, CameraMode.MORE -> {
+                if (aspectRatio in 1.1f..1.5f) aspectRatio else (4f / 3f)
+            }
+            else -> {
+                if (aspectRatio > 0.1f) {
+                    if (aspectRatio < 1.0f) 1f / aspectRatio else aspectRatio
+                } else (4f / 3f)
+            }
+        }
+
+        // Determine exact aspect ratio from active preview buffer size
+        val bufRatio = if (previewBufferSize != null && previewBufferSize.height > 0 && previewBufferSize.width > 0) {
             kotlin.math.max(previewBufferSize.width, previewBufferSize.height).toFloat() /
                     kotlin.math.min(previewBufferSize.width, previewBufferSize.height).toFloat()
         } else null
 
-        val finalRatio = streamRatio ?: if (isVideoLayout) {
-            16f / 9f
+        // Validate buffer ratio against active mode to prevent stale transition distortion
+        val finalRatio = if (bufRatio != null && kotlin.math.abs(bufRatio - targetModeRatio) < 0.20f) {
+            bufRatio
         } else {
-            when {
-                aspectRatio <= 0.1f -> 4f / 3f
-                aspectRatio < 1.0f -> 1f / aspectRatio
-                else -> aspectRatio
-            }
+            targetModeRatio
         }
 
-        val targetWidth: androidx.compose.ui.unit.Dp
-        val targetHeight: androidx.compose.ui.unit.Dp
-
-        if (isVideoLayout) {
-            // Video & Cinema layout: fit inside available height between top clearance and shutter
-            var calcHeight = containerWidth * finalRatio
-            var calcWidth = containerWidth
-            if (calcHeight > availableVideoHeight) {
-                calcHeight = availableVideoHeight
-                calcWidth = calcHeight / finalRatio
-            }
-            targetWidth = calcWidth
-            targetHeight = calcHeight
-        } else {
-            // Photo & other modes: maintain exact aspect ratio without vertical stretch
-            var calcHeight = containerWidth * finalRatio
-            var calcWidth = containerWidth
-            if (calcHeight > containerHeight) {
-                calcHeight = containerHeight
-                calcWidth = calcHeight / finalRatio
-            }
-            targetWidth = calcWidth
-            targetHeight = calcHeight
+        // Exact aspect ratio geometry: targetHeight is strictly targetWidth * finalRatio
+        var calcWidth = containerWidth
+        var calcHeight = containerWidth * finalRatio
+        if (calcHeight > maxAvailableHeight) {
+            calcHeight = maxAvailableHeight
+            calcWidth = calcHeight / finalRatio
         }
+        val targetWidth = calcWidth
+        val targetHeight = calcHeight
 
         // Viewfinder is positioned cleanly:
         // Video/Cinema extends down to almost the top edge of the shutter button

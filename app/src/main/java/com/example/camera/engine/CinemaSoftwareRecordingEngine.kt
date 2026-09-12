@@ -49,6 +49,15 @@ class CinemaSoftwareRecordingEngine(private val context: Context) {
     private var isMuxerStarted = false
     private var videoTrackIndex = -1
     private var audioTrackIndex = -1
+    private var isAudioRequested = false
+    private val pendingVideoSamples = mutableListOf<QueuedSample>()
+    private val pendingAudioSamples = mutableListOf<QueuedSample>()
+    private var videoFormatStartTime = 0L
+
+    private data class QueuedSample(
+        val buffer: ByteBuffer,
+        val info: MediaCodec.BufferInfo
+    )
 
     // Video MediaCodec Pipeline
     private var videoCodec: MediaCodec? = null
@@ -95,11 +104,18 @@ class CinemaSoftwareRecordingEngine(private val context: Context) {
         videoTrackIndex = -1
         audioTrackIndex = -1
         isMuxerStarted = false
+        isAudioRequested = isAudioEnabled
+        videoFormatStartTime = 0L
+        synchronized(muxerLock) {
+            pendingVideoSamples.clear()
+            pendingAudioSamples.clear()
+        }
 
         val is10Bit = bitDepth == LogBitDepth.BIT_10
 
-        // 1. Setup MediaMuxer according to container format
-        val isWebm = (codec == CinemaCodec.VP9) || destFile.name.endsWith(".webm")
+        // 1. Setup MediaMuxer according to container format and codec support
+        val hasOpus = isAudioEnabled && hasEncoderForMime(MediaFormat.MIMETYPE_AUDIO_OPUS)
+        val isWebm = (codec == CinemaCodec.VP9) && (!isAudioEnabled || hasOpus || destFile.name.endsWith(".webm"))
         val muxerOutputFormat = if (isWebm) {
             MediaMuxer.OutputFormat.MUXER_OUTPUT_WEBM
         } else {
@@ -119,6 +135,7 @@ class CinemaSoftwareRecordingEngine(private val context: Context) {
                 setupAudioPipeline(isWebm)
             } catch (e: Exception) {
                 Log.w(TAG, "Audio recording initialization skipped/failed: ${e.message}")
+                isAudioRequested = false
             }
         }
 
@@ -204,13 +221,29 @@ class CinemaSoftwareRecordingEngine(private val context: Context) {
         is10Bit: Boolean,
         isWebm: Boolean
     ): Surface {
-        val mime = if (isWebm) {
-            MediaFormat.MIMETYPE_VIDEO_VP9
-        } else if (codec == CinemaCodec.PRORES && is10Bit) {
-            // ProRes 10-bit software mastering: HEVC Main10 or AVC High software
-            MediaFormat.MIMETYPE_VIDEO_HEVC
-        } else {
-            MediaFormat.MIMETYPE_VIDEO_AVC
+        val mime = when {
+            isWebm -> {
+                if (hasEncoderForMime(MediaFormat.MIMETYPE_VIDEO_VP9, requireSurface = true)) {
+                    MediaFormat.MIMETYPE_VIDEO_VP9
+                } else {
+                    MediaFormat.MIMETYPE_VIDEO_AVC
+                }
+            }
+            codec == CinemaCodec.PRORES -> {
+                // ProRes 422 10-bit mastering: HEVC Main10 or AVC High software
+                if (hasEncoderForMime(MediaFormat.MIMETYPE_VIDEO_HEVC, requireSurface = true)) {
+                    MediaFormat.MIMETYPE_VIDEO_HEVC
+                } else {
+                    MediaFormat.MIMETYPE_VIDEO_AVC
+                }
+            }
+            else -> {
+                if (is10Bit && hasEncoderForMime(MediaFormat.MIMETYPE_VIDEO_HEVC, requireSurface = true)) {
+                    MediaFormat.MIMETYPE_VIDEO_HEVC
+                } else {
+                    MediaFormat.MIMETYPE_VIDEO_AVC
+                }
+            }
         }
 
         val format = MediaFormat.createVideoFormat(mime, width, height).apply {
@@ -224,7 +257,7 @@ class CinemaSoftwareRecordingEngine(private val context: Context) {
                 setInteger(MediaFormat.KEY_BITRATE_MODE, MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_VBR)
             } catch (ignored: Exception) {}
 
-            if (isWebm) {
+            if (mime == MediaFormat.MIMETYPE_VIDEO_VP9) {
                 // VP9 Profiles
                 if (is10Bit && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                     try {
@@ -250,14 +283,32 @@ class CinemaSoftwareRecordingEngine(private val context: Context) {
         try {
             encoder.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
         } catch (e: Exception) {
-            Log.w(TAG, "Initial encoder configure failed with 10-bit flags, retrying with baseline", e)
+            Log.w(TAG, "Initial encoder configure failed with high-profile flags, retrying with baseline", e)
             val fallbackFormat = MediaFormat.createVideoFormat(mime, width, height).apply {
                 setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
                 setInteger(MediaFormat.KEY_BIT_RATE, bitrate)
                 setInteger(MediaFormat.KEY_FRAME_RATE, fps)
                 setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1)
             }
-            encoder.configure(fallbackFormat, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+            try {
+                encoder.configure(fallbackFormat, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+            } catch (e2: Exception) {
+                Log.w(TAG, "Fallback to AVC baseline encoder due to config failure", e2)
+                val avcEncoder = tryCreateSoftwareEncoder(MediaFormat.MIMETYPE_VIDEO_AVC)
+                val avcFormat = MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, width, height).apply {
+                    setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
+                    setInteger(MediaFormat.KEY_BIT_RATE, bitrate)
+                    setInteger(MediaFormat.KEY_FRAME_RATE, fps)
+                    setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1)
+                }
+                avcEncoder.configure(avcFormat, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+                val surface = avcEncoder.createInputSurface()
+                avcEncoder.start()
+                videoCodec = avcEncoder
+                videoInputSurface = surface
+                startVideoDrainThread(avcEncoder)
+                return surface
+            }
         }
 
         val surface = encoder.createInputSurface()
@@ -272,28 +323,51 @@ class CinemaSoftwareRecordingEngine(private val context: Context) {
     }
 
     private fun tryCreateSoftwareEncoder(mime: String): MediaCodec {
-        val candidates = when (mime) {
-            MediaFormat.MIMETYPE_VIDEO_VP9 -> listOf(
-                "c2.android.vp9.encoder",
-                "OMX.google.vp9.encoder"
-            )
-            MediaFormat.MIMETYPE_VIDEO_HEVC -> listOf(
-                "c2.android.hevc.encoder",
-                "OMX.google.hevc.encoder"
-            )
-            else -> listOf(
-                "c2.android.avc.encoder",
-                "OMX.google.h264.encoder"
-            )
-        }
-
-        for (name in candidates) {
+        val codecList = MediaCodecList(MediaCodecList.REGULAR_CODECS)
+        for (info in codecList.codecInfos) {
+            if (!info.isEncoder) continue
+            val types = info.supportedTypes
+            var matches = false
+            for (t in types) {
+                if (t.equals(mime, ignoreCase = true)) {
+                    matches = true
+                    break
+                }
+            }
+            if (!matches) continue
             try {
-                return MediaCodec.createByCodecName(name)
+                val caps = info.getCapabilitiesForType(mime)
+                for (fmt in caps.colorFormats) {
+                    if (fmt == MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface) {
+                        return MediaCodec.createByCodecName(info.name)
+                    }
+                }
             } catch (ignored: Exception) {}
         }
-
         return MediaCodec.createEncoderByType(mime)
+    }
+
+    private fun hasEncoderForMime(mime: String, requireSurface: Boolean = false): Boolean {
+        try {
+            val list = MediaCodecList(MediaCodecList.REGULAR_CODECS)
+            for (info in list.codecInfos) {
+                if (!info.isEncoder) continue
+                for (type in info.supportedTypes) {
+                    if (type.equals(mime, ignoreCase = true)) {
+                        if (!requireSurface) return true
+                        try {
+                            val caps = info.getCapabilitiesForType(mime)
+                            for (fmt in caps.colorFormats) {
+                                if (fmt == MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface) {
+                                    return true
+                                }
+                            }
+                        } catch (ignored: Exception) {}
+                    }
+                }
+            }
+        } catch (ignored: Exception) {}
+        return false
     }
 
     private fun startVideoDrainThread(encoder: MediaCodec) {
@@ -315,12 +389,22 @@ class CinemaSoftwareRecordingEngine(private val context: Context) {
                         val muxer = mediaMuxer
                         if (muxer != null && videoTrackIndex < 0) {
                             videoTrackIndex = muxer.addTrack(encoder.outputFormat)
+                            videoFormatStartTime = System.currentTimeMillis()
                             checkAndStartMuxer()
                         }
                     }
                 } else if (outputBufferIndex >= 0) {
                     if ((bufferInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) {
                         eosReached = true
+                    }
+
+                    // Check if audio has timed out
+                    if (!isMuxerStarted && isAudioRequested && videoTrackIndex >= 0 && videoFormatStartTime > 0L) {
+                        if (System.currentTimeMillis() - videoFormatStartTime > 600L) {
+                            Log.w(TAG, "Audio track setup timed out, starting muxer with video only")
+                            isAudioRequested = false
+                            checkAndStartMuxer()
+                        }
                     }
 
                     // Ignore pure codec configuration buffers (SPS/PPS) as muxer gets them via format
@@ -330,26 +414,41 @@ class CinemaSoftwareRecordingEngine(private val context: Context) {
                         val encodedBuffer = encoder.getOutputBuffer(outputBufferIndex)
                         if (encodedBuffer != null) {
                             synchronized(muxerLock) {
+                                // Normalize presentation timestamps
+                                if (baseVideoPtsUs < 0) {
+                                    baseVideoPtsUs = bufferInfo.presentationTimeUs
+                                }
+                                var ptsUs = bufferInfo.presentationTimeUs - baseVideoPtsUs
+                                if (ptsUs <= lastVideoPtsUs) {
+                                    ptsUs = lastVideoPtsUs + 1000L
+                                }
+                                bufferInfo.presentationTimeUs = ptsUs
+                                lastVideoPtsUs = ptsUs
+
                                 if (isMuxerStarted && videoTrackIndex >= 0) {
                                     encodedBuffer.position(bufferInfo.offset)
                                     encodedBuffer.limit(bufferInfo.offset + bufferInfo.size)
-
-                                    // Normalize presentation timestamps
-                                    if (baseVideoPtsUs < 0) {
-                                        baseVideoPtsUs = bufferInfo.presentationTimeUs
-                                    }
-                                    var ptsUs = bufferInfo.presentationTimeUs - baseVideoPtsUs
-                                    if (ptsUs <= lastVideoPtsUs) {
-                                        ptsUs = lastVideoPtsUs + 1000L
-                                    }
-                                    bufferInfo.presentationTimeUs = ptsUs
-                                    lastVideoPtsUs = ptsUs
 
                                     try {
                                         mediaMuxer?.writeSampleData(videoTrackIndex, encodedBuffer, bufferInfo)
                                     } catch (e: Exception) {
                                         Log.e(TAG, "Error writing video sample data", e)
                                     }
+                                } else {
+                                    // Queue sample until muxer starts
+                                    try {
+                                        val dup = ByteBuffer.allocateDirect(bufferInfo.size)
+                                        encodedBuffer.position(bufferInfo.offset)
+                                        encodedBuffer.limit(bufferInfo.offset + bufferInfo.size)
+                                        dup.put(encodedBuffer)
+                                        dup.flip()
+                                        val copyInfo = MediaCodec.BufferInfo().apply {
+                                            set(0, bufferInfo.size, bufferInfo.presentationTimeUs, bufferInfo.flags)
+                                        }
+                                        if (pendingVideoSamples.size < 60) {
+                                            pendingVideoSamples.add(QueuedSample(dup, copyInfo))
+                                        }
+                                    } catch (ignored: Exception) {}
                                 }
                             }
                         }
@@ -468,9 +567,13 @@ class CinemaSoftwareRecordingEngine(private val context: Context) {
                 if (outputBufferIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
                     synchronized(muxerLock) {
                         val muxer = mediaMuxer
-                        if (muxer != null && audioTrackIndex < 0) {
-                            audioTrackIndex = muxer.addTrack(encoder.outputFormat)
-                            checkAndStartMuxer()
+                        if (muxer != null && audioTrackIndex < 0 && !isMuxerStarted) {
+                            try {
+                                audioTrackIndex = muxer.addTrack(encoder.outputFormat)
+                                checkAndStartMuxer()
+                            } catch (e: Exception) {
+                                Log.w(TAG, "Failed to add audio track to muxer", e)
+                            }
                         }
                     }
                 } else if (outputBufferIndex >= 0) {
@@ -482,25 +585,40 @@ class CinemaSoftwareRecordingEngine(private val context: Context) {
                         val encodedBuffer = encoder.getOutputBuffer(outputBufferIndex)
                         if (encodedBuffer != null) {
                             synchronized(muxerLock) {
+                                if (baseAudioPtsUs < 0) {
+                                    baseAudioPtsUs = bufferInfo.presentationTimeUs
+                                }
+                                var ptsUs = bufferInfo.presentationTimeUs - baseAudioPtsUs
+                                if (ptsUs <= lastAudioPtsUs) {
+                                    ptsUs = lastAudioPtsUs + 1000L
+                                }
+                                bufferInfo.presentationTimeUs = ptsUs
+                                lastAudioPtsUs = ptsUs
+
                                 if (isMuxerStarted && audioTrackIndex >= 0) {
                                     encodedBuffer.position(bufferInfo.offset)
                                     encodedBuffer.limit(bufferInfo.offset + bufferInfo.size)
-
-                                    if (baseAudioPtsUs < 0) {
-                                        baseAudioPtsUs = bufferInfo.presentationTimeUs
-                                    }
-                                    var ptsUs = bufferInfo.presentationTimeUs - baseAudioPtsUs
-                                    if (ptsUs <= lastAudioPtsUs) {
-                                        ptsUs = lastAudioPtsUs + 1000L
-                                    }
-                                    bufferInfo.presentationTimeUs = ptsUs
-                                    lastAudioPtsUs = ptsUs
 
                                     try {
                                         mediaMuxer?.writeSampleData(audioTrackIndex, encodedBuffer, bufferInfo)
                                     } catch (e: Exception) {
                                         Log.e(TAG, "Error writing audio sample data", e)
                                     }
+                                } else {
+                                    // Queue sample until muxer starts
+                                    try {
+                                        val dup = ByteBuffer.allocateDirect(bufferInfo.size)
+                                        encodedBuffer.position(bufferInfo.offset)
+                                        encodedBuffer.limit(bufferInfo.offset + bufferInfo.size)
+                                        dup.put(encodedBuffer)
+                                        dup.flip()
+                                        val copyInfo = MediaCodec.BufferInfo().apply {
+                                            set(0, bufferInfo.size, bufferInfo.presentationTimeUs, bufferInfo.flags)
+                                        }
+                                        if (pendingAudioSamples.size < 60) {
+                                            pendingAudioSamples.add(QueuedSample(dup, copyInfo))
+                                        }
+                                    } catch (ignored: Exception) {}
                                 }
                             }
                         }
@@ -540,14 +658,50 @@ class CinemaSoftwareRecordingEngine(private val context: Context) {
     }
 
     private fun checkAndStartMuxer() {
-        val muxer = mediaMuxer ?: return
-        if (!isMuxerStarted && videoTrackIndex >= 0) {
-            try {
-                muxer.start()
-                isMuxerStarted = true
-                Log.d(TAG, "MediaMuxer successfully started (videoTrack=$videoTrackIndex, audioTrack=$audioTrackIndex)")
-            } catch (e: Exception) {
-                Log.e(TAG, "MediaMuxer start failed", e)
+        synchronized(muxerLock) {
+            val muxer = mediaMuxer ?: return
+            if (isMuxerStarted) return
+
+            val isAudioPending = isAudioRequested && audioCodec != null && audioTrackIndex < 0
+            val now = System.currentTimeMillis()
+            if (videoFormatStartTime == 0L && videoTrackIndex >= 0) {
+                videoFormatStartTime = now
+            }
+            val audioTimedOut = videoFormatStartTime > 0L && (now - videoFormatStartTime > 600L)
+
+            // Can start if video track is ready, AND (audio is not expected, or audio track is ready, or audio timed out)
+            val canStart = videoTrackIndex >= 0 && (!isAudioPending || audioTimedOut)
+
+            if (canStart) {
+                try {
+                    muxer.start()
+                    isMuxerStarted = true
+                    Log.d(TAG, "MediaMuxer successfully started (videoTrack=$videoTrackIndex, audioTrack=$audioTrackIndex, audioTimedOut=$audioTimedOut)")
+
+                    // Flush pending queued video samples
+                    for (s in pendingVideoSamples) {
+                        try {
+                            muxer.writeSampleData(videoTrackIndex, s.buffer, s.info)
+                        } catch (e: Exception) {
+                            Log.w(TAG, "Error flushing queued video sample", e)
+                        }
+                    }
+                    pendingVideoSamples.clear()
+
+                    // Flush pending queued audio samples if audio track was added
+                    if (audioTrackIndex >= 0) {
+                        for (s in pendingAudioSamples) {
+                            try {
+                                muxer.writeSampleData(audioTrackIndex, s.buffer, s.info)
+                            } catch (e: Exception) {
+                                Log.w(TAG, "Error flushing queued audio sample", e)
+                            }
+                        }
+                        pendingAudioSamples.clear()
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "MediaMuxer start failed", e)
+                }
             }
         }
     }

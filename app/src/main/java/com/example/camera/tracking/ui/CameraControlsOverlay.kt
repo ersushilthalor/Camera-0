@@ -49,6 +49,8 @@ fun CameraControlsOverlay(
     onToggleGimbal: (Boolean) -> Unit,
     onStartCinematicPan: (Float) -> Unit,
     onStopCinematicPan: () -> Unit,
+    onCameraLensChanged: (TrackingCameraLens) -> Unit = {},
+    onFpsOptionChanged: (TrackingFpsOption) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     Column(
@@ -66,7 +68,9 @@ fun CameraControlsOverlay(
             onToggleAspectRatio = onToggleAspectRatio,
             onToggleGimbal = onToggleGimbal,
             onStartCinematicPan = onStartCinematicPan,
-            onStopCinematicPan = onStopCinematicPan
+            onStopCinematicPan = onStopCinematicPan,
+            onCameraLensChanged = onCameraLensChanged,
+            onFpsOptionChanged = onFpsOptionChanged
         )
 
         // CENTER FIXED STATUS HUD
@@ -95,7 +99,8 @@ private fun TopFixedControlsBar(
     onToggleAspectRatio: () -> Unit,
     onToggleGimbal: (Boolean) -> Unit,
     onStartCinematicPan: (Float) -> Unit,
-    onStopCinematicPan: () -> Unit
+    onStopCinematicPan: () -> Unit,
+    onCameraLensChanged: (TrackingCameraLens) -> Unit = {}
 ) {
     Column(
         modifier = Modifier
@@ -176,14 +181,22 @@ private fun TopFixedControlsBar(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Surface(
                     shape = RoundedCornerShape(12.dp),
-                    color = Color(0x33000000)
+                    color = Color(0xFF1E293B),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF38BDF8).copy(alpha = 0.5f)),
+                    modifier = Modifier
+                        .clickable {
+                            val options = TrackingFpsOption.values()
+                            val nextIdx = (options.indexOf(uiState.selectedFpsOption) + 1) % options.size
+                            onFpsOptionChanged(options[nextIdx])
+                        }
+                        .testTag("fps_toggle_button")
                 ) {
                     Text(
-                        text = "${uiState.fps} FPS",
-                        color = Color(0xFF94A3B8),
+                        text = "${uiState.selectedFpsOption.label}",
+                        color = Color(0xFF38BDF8),
                         fontSize = 11.sp,
-                        fontWeight = FontWeight.Medium,
-                        modifier = Modifier.padding(horizontal = 7.dp, vertical = 4.dp)
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
                     )
                 }
 
@@ -343,6 +356,138 @@ private fun TopFixedControlsBar(
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Medium,
                         color = Color(0xFFE2E8F0)
+                    )
+                }
+            }
+
+            // Quick Lens Selector: 0.5x, 1x, Front
+            TrackingCameraLens.values().forEach { lens ->
+                val isLensSelected = uiState.selectedLens == lens
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(if (isLensSelected) Color(0xFF7C3AED) else Color(0x44334155))
+                        .border(
+                            1.dp,
+                            if (isLensSelected) Color(0xFFA78BFA) else Color.Transparent,
+                            RoundedCornerShape(12.dp)
+                        )
+                        .clickable { onCameraLensChanged(lens) }
+                        .padding(horizontal = 8.dp, vertical = 5.dp)
+                        .testTag("quick_lens_${lens.name}")
+                ) {
+                    Text(
+                        text = lens.zoomLabel,
+                        fontSize = 11.sp,
+                        fontWeight = if (isLensSelected) FontWeight.Bold else FontWeight.Medium,
+                        color = if (isLensSelected) Color.White else Color(0xFFCBD5E1)
+                    )
+                }
+            }
+
+            // Adaptive Learned Subjects Badge
+            if (uiState.learnedSubjectsCount > 0) {
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(Color(0xFF0F766E).copy(alpha = 0.8f))
+                        .border(1.dp, Color(0xFF2DD4BF), RoundedCornerShape(12.dp))
+                        .clickable { onOpenSettings() }
+                        .padding(horizontal = 8.dp, vertical = 5.dp)
+                ) {
+                    Text(
+                        text = "🧠 ${uiState.learnedSubjectsCount} LEARNED",
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFFCCFBF1)
+                    )
+                }
+            }
+
+            // Quick Lens Selector: 0.5x, 1x, Front
+            TrackingCameraLens.values().forEach { lens ->
+                val isLensSelected = uiState.selectedLens == lens
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(if (isLensSelected) Color(0xFF7C3AED) else Color(0x44334155))
+                        .border(
+                            1.dp,
+                            if (isLensSelected) Color(0xFFA78BFA) else Color.Transparent,
+                            RoundedCornerShape(12.dp)
+                        )
+                        .clickable { onCameraLensChanged(lens) }
+                        .padding(horizontal = 8.dp, vertical = 5.dp)
+                        .testTag("quick_lens_${lens.name}")
+                ) {
+                    Text(
+                        text = lens.displayName,
+                        fontSize = 11.sp,
+                        fontWeight = if (isLensSelected) FontWeight.Bold else FontWeight.Medium,
+                        color = if (isLensSelected) Color.White else Color(0xFFCBD5E1)
+                    )
+                }
+            }
+
+            // Adaptive Learned Subjects Badge
+            if (uiState.learnedSubjectsCount > 0) {
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(Color(0xFF0F766E).copy(alpha = 0.8f))
+                        .border(1.dp, Color(0xFF2DD4BF), RoundedCornerShape(12.dp))
+                        .clickable { onOpenSettings() }
+                        .padding(horizontal = 8.dp, vertical = 5.dp)
+                ) {
+                    Text(
+                        text = "🧠 ${uiState.learnedSubjectsCount} LEARNED",
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFFCCFBF1)
+                    )
+                }
+            }
+
+            // Quick Lens Selector: 0.5x, 1x, Front
+            TrackingCameraLens.values().forEach { lens ->
+                val isLensSelected = uiState.selectedLens == lens
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(if (isLensSelected) Color(0xFF7C3AED) else Color(0x44334155))
+                        .border(
+                            1.dp,
+                            if (isLensSelected) Color(0xFFA78BFA) else Color.Transparent,
+                            RoundedCornerShape(12.dp)
+                        )
+                        .clickable { onCameraLensChanged(lens) }
+                        .padding(horizontal = 8.dp, vertical = 5.dp)
+                        .testTag("quick_lens_${lens.name}")
+                ) {
+                    Text(
+                        text = lens.zoomLabel,
+                        fontSize = 11.sp,
+                        fontWeight = if (isLensSelected) FontWeight.Bold else FontWeight.Medium,
+                        color = if (isLensSelected) Color.White else Color(0xFFCBD5E1)
+                    )
+                }
+            }
+
+            // Adaptive Learned Subjects Badge
+            if (uiState.learnedSubjectsCount > 0) {
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(Color(0xFF0F766E).copy(alpha = 0.8f))
+                        .border(1.dp, Color(0xFF2DD4BF), RoundedCornerShape(12.dp))
+                        .clickable { onOpenSettings() }
+                        .padding(horizontal = 8.dp, vertical = 5.dp)
+                ) {
+                    Text(
+                        text = "🧠 ${uiState.learnedSubjectsCount} LEARNED",
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFFCCFBF1)
                     )
                 }
             }
@@ -535,7 +680,8 @@ private fun BottomFixedControlsBar(
     uiState: CameraTrackingUiState,
     onCaptureModeChanged: (CameraCaptureMode) -> Unit,
     onShutterClick: () -> Unit,
-    onOpenMediaReview: (CapturedMediaItem) -> Unit
+    onOpenMediaReview: (CapturedMediaItem) -> Unit,
+    onCameraLensChanged: (TrackingCameraLens) -> Unit = {}
 ) {
     Column(
         modifier = Modifier
@@ -545,9 +691,36 @@ private fun BottomFixedControlsBar(
                     colors = listOf(Color.Transparent, Color.Black.copy(alpha = 0.90f))
                 )
             )
-            .padding(horizontal = 24.dp, vertical = 20.dp),
+            .padding(horizontal = 24.dp, vertical = 16.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
+        // Lens Quick Switcher: 0.5× Ultra-Wide, 1.0× Wide, Front Selfie
+        Row(
+            modifier = Modifier.padding(bottom = 12.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            uiState.availableLenses.forEach { lens ->
+                val isSelected = uiState.selectedLens == lens
+                Surface(
+                    shape = RoundedCornerShape(16.dp),
+                    color = if (isSelected) Color(0xFF00E5FF).copy(alpha = 0.25f) else Color(0x33000000),
+                    border = if (isSelected) androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF00E5FF)) else null,
+                    modifier = Modifier
+                        .clickable { onCameraLensChanged(lens) }
+                        .testTag("lens_quick_${lens.name}")
+                ) {
+                    Text(
+                        text = lens.zoomLabel,
+                        color = if (isSelected) Color(0xFF00E5FF) else Color(0xFFE2E8F0),
+                        fontSize = 12.sp,
+                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+                    )
+                }
+            }
+        }
+
         // Mode Selector: PHOTO / VIDEO
         Row(
             modifier = Modifier.padding(bottom = 16.dp),

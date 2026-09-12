@@ -55,6 +55,21 @@ class SubjectTracker(
     // Tracking speed/intensity factor (0.2 = Smooth, 1.0 = Normal, 2.2 = Fast, 3.5 = Ultra)
     var trackingSpeedIntensity: Float = 1.0f
 
+    // Local adaptive learner instance
+    var adaptiveLearner: AdaptiveTrackingLearner? = null
+
+    // Motion history tracking to discriminate between genuine moving subjects and static objects
+    private val candidateMotionMap = mutableMapOf<Int, CandidateMotionRecord>()
+
+    private data class CandidateMotionRecord(
+        var lastCx: Float,
+        var lastCy: Float,
+        var totalDisplacement: Float = 0f,
+        var observationCount: Int = 1,
+        var isVerifiedMoving: Boolean = false,
+        var lastSeenMs: Long = System.currentTimeMillis()
+    )
+
     // Provisional lock in case user taps an unclassified or newly appearing subject
     private var provisionalTapCenter: PointF? = null
     private var provisionalIdCounter = 1000
@@ -100,6 +115,8 @@ class SubjectTracker(
             status = TrackingStatus.TRACKING_LOCKED
             missedFrames = 0
             provisionalTapCenter = null
+
+            adaptiveLearner?.startSelectionSession(hit, signature, hit.isHuman)
         } else {
             val newId = provisionalIdCounter++
             val halfSize = 0.09f
@@ -121,7 +138,8 @@ class SubjectTracker(
                 accelY = 0f,
                 colorHistogram = signature,
                 lockQuality = 0.9f,
-                isConfirmedByAi = false
+                isConfirmedByAi = false,
+                isHuman = true // Assume tapped target is user subject
             )
             Log.d(TAG, "Ultra Provisional lock initiated at ($safeX, $safeY), ID=$newId")
             activeTrackingId = newId
@@ -129,6 +147,8 @@ class SubjectTracker(
             status = TrackingStatus.TRACKING_LOCKED
             missedFrames = 0
             provisionalTapCenter = PointF(safeX, safeY)
+
+            adaptiveLearner?.startSelectionSession(provisional, signature, isHuman = true)
         }
         onStateUpdated(status, activeSubject, allCurrentDetections)
     }
@@ -139,6 +159,7 @@ class SubjectTracker(
     @Synchronized
     fun unlock() {
         Log.d(TAG, "Unlocked subject tracking.")
+        adaptiveLearner?.endSelectionSession(wasExplicitCorrection = true)
         activeTrackingId = null
         activeSubject = null
         status = TrackingStatus.IDLE
@@ -193,6 +214,7 @@ class SubjectTracker(
                 accelX = ax * friction,
                 accelY = ay * friction
             )
+            adaptiveLearner?.updateTrackingTelemetry(updatedBounds)
             onStateUpdated(status, activeSubject, emptyList())
         }
     }
@@ -235,6 +257,9 @@ class SubjectTracker(
 
     /**
      * Converts ML Kit DetectedObject list to normalized TrackedSubject models.
+     * Strictly enforces:
+     * - Only track humans and genuinely moving subjects.
+     * - NEVER track walls, background, furniture, or static objects.
      */
     @Synchronized
     fun handleDetections(
@@ -246,6 +271,10 @@ class SubjectTracker(
     ) {
         val safeW = frameWidth.coerceAtLeast(1)
         val safeH = frameHeight.coerceAtLeast(1)
+        val nowMs = System.currentTimeMillis()
+
+        // Prune stale motion records older than 4 seconds
+        candidateMotionMap.entries.removeAll { nowMs - it.value.lastSeenMs > 4000L }
 
         val normalizedList = detectedObjects.mapNotNull { obj ->
             try {
@@ -256,15 +285,103 @@ class SubjectTracker(
                     right = (rect.right.toFloat() / safeW).coerceIn(0f, 1f),
                     bottom = (rect.bottom.toFloat() / safeH).coerceIn(0f, 1f)
                 )
-                if (normRect.width < 0.02f || normRect.height < 0.02f) return@mapNotNull null
-                val label = obj.labels.firstOrNull()?.text ?: "Subject"
+                if (normRect.width < 0.025f || normRect.height < 0.025f) return@mapNotNull null
+
+                val rawLabel = obj.labels.firstOrNull()?.text ?: "Subject"
                 val conf = obj.labels.firstOrNull()?.confidence ?: 0.94f
+                val id = obj.trackingId ?: (obj.hashCode() and 0xFFFF)
+
+                // 1. STRICT WALL & BACKGROUND REJECTION:
+                // Exclude full-frame boxes (>80%), or scenery/structural labels
+                val isBackgroundOrWall = (normRect.width > 0.80f && normRect.height > 0.80f) ||
+                        rawLabel.contains("place", ignoreCase = true) ||
+                        rawLabel.contains("wall", ignoreCase = true) ||
+                        rawLabel.contains("room", ignoreCase = true) ||
+                        rawLabel.contains("building", ignoreCase = true) ||
+                        rawLabel.contains("floor", ignoreCase = true) ||
+                        rawLabel.contains("ceiling", ignoreCase = true) ||
+                        rawLabel.contains("window", ignoreCase = true) ||
+                        rawLabel.contains("door", ignoreCase = true)
+
+                if (isBackgroundOrWall) {
+                    return@mapNotNull null
+                }
+
+                // 2. STRICT FURNITURE & STATIC OBJECT REJECTION:
+                // Exclude furniture and household static fixture items
+                val isFurniture = rawLabel.contains("home good", ignoreCase = true) ||
+                        rawLabel.contains("furniture", ignoreCase = true) ||
+                        rawLabel.contains("chair", ignoreCase = true) ||
+                        rawLabel.contains("table", ignoreCase = true) ||
+                        rawLabel.contains("desk", ignoreCase = true) ||
+                        rawLabel.contains("sofa", ignoreCase = true) ||
+                        rawLabel.contains("couch", ignoreCase = true) ||
+                        rawLabel.contains("bed", ignoreCase = true) ||
+                        rawLabel.contains("shelf", ignoreCase = true) ||
+                        rawLabel.contains("cabinet", ignoreCase = true) ||
+                        rawLabel.contains("lamp", ignoreCase = true) ||
+                        rawLabel.contains("tv", ignoreCase = true) ||
+                        rawLabel.contains("monitor", ignoreCase = true) ||
+                        rawLabel.contains("plant", ignoreCase = true)
+
+                if (isFurniture) {
+                    return@mapNotNull null
+                }
+
+                // 3. HUMAN CLASSIFICATION:
+                val aspect = normRect.height / normRect.width
+                val isHuman = rawLabel.contains("person", ignoreCase = true) ||
+                        rawLabel.contains("human", ignoreCase = true) ||
+                        rawLabel.contains("face", ignoreCase = true) ||
+                        rawLabel.contains("man", ignoreCase = true) ||
+                        rawLabel.contains("woman", ignoreCase = true) ||
+                        rawLabel.contains("child", ignoreCase = true) ||
+                        rawLabel.contains("fashion good", ignoreCase = true) ||
+                        (aspect in 1.15f..3.8f && normRect.width in 0.05f..0.78f && normRect.height in 0.12f..0.92f)
+
+                // 4. MOTION ANALYSIS:
+                val motion = candidateMotionMap.getOrPut(id) {
+                    CandidateMotionRecord(
+                        lastCx = normRect.centerX,
+                        lastCy = normRect.centerY,
+                        lastSeenMs = nowMs
+                    )
+                }
+
+                val dx = normRect.centerX - motion.lastCx
+                val dy = normRect.centerY - motion.lastCy
+                val dist = hypot(dx.toDouble(), dy.toDouble()).toFloat()
+                motion.totalDisplacement += dist
+                motion.lastCx = normRect.centerX
+                motion.lastCy = normRect.centerY
+                motion.observationCount++
+                motion.lastSeenMs = nowMs
+
+                val speed = if (dt > 0.001f) dist / dt else 0f
+                val isMoving = speed > 0.035f || motion.totalDisplacement >= 0.022f
+
+                // STRICT FILTER: NEVER track static non-human objects
+                if (!isHuman && !isMoving && motion.observationCount >= 2) {
+                    return@mapNotNull null
+                }
+
+                // Color histogram signature & Adaptive Learning Affinity
+                val signature = extractColorSignature(sourceBitmap, normRect)
+                val affinity = adaptiveLearner?.computeLearnedAffinity(normRect, signature, isHuman) ?: 0f
+
+                val displayLabel = if (isHuman) "Human" else if (isMoving) "Moving Subject" else rawLabel
+
                 TrackedSubject(
-                    trackingId = obj.trackingId ?: (obj.hashCode() and 0xFFFF),
+                    trackingId = id,
                     bounds = normRect,
-                    label = label,
+                    label = displayLabel,
                     confidence = conf,
-                    isConfirmedByAi = true
+                    isConfirmedByAi = true,
+                    isHuman = isHuman,
+                    isMoving = isMoving,
+                    movementSpeed = speed,
+                    learnedAffinity = affinity,
+                    colorHistogram = signature
                 )
             } catch (e: Exception) {
                 null
@@ -290,8 +407,15 @@ class SubjectTracker(
         sourceBitmap: Bitmap? = null
     ) {
         if (status == TrackingStatus.IDLE) {
-            // If candidates exist, automatic acquisition can begin if enabled
-            onStateUpdated(status, null, candidates)
+            // Prioritize candidates: learned affinity, humans first, then genuinely moving
+            val sortedCandidates = candidates.sortedByDescending { cand ->
+                val humanMultiplier = if (cand.isHuman) 1.6f else 1.0f
+                val motionMultiplier = if (cand.isMoving) 1.3f else 1.0f
+                val affinityMultiplier = 1.0f + cand.learnedAffinity * 1.5f
+                val area = cand.bounds.width * cand.bounds.height
+                area * humanMultiplier * motionMultiplier * affinityMultiplier
+            }
+            onStateUpdated(status, null, sortedCandidates)
             return
         }
 
@@ -418,9 +542,27 @@ class SubjectTracker(
                 lastSeenTimestamp = System.currentTimeMillis()
             )
 
+            // Strict enforcement: Never track static non-human objects!
+            if (!matched.isHuman && !matched.isMoving) {
+                val motionRecord = candidateMotionMap[matched.trackingId]
+                if (motionRecord != null && motionRecord.observationCount >= 8 && motionRecord.totalDisplacement < 0.018f) {
+                    Log.d(TAG, "Rejecting/dropping lock on confirmed static non-human object ID=${matched.trackingId}")
+                    unlock()
+                    return
+                }
+            }
+
             activeSubject = updated
             status = TrackingStatus.TRACKING_LOCKED
+            adaptiveLearner?.updateTrackingTelemetry(updated.bounds)
         } else {
+            // Drop unconfirmed provisional lock if user tapped a static background or wall
+            if (currentActive != null && !currentActive.isConfirmedByAi && missedFrames > 35) {
+                Log.d(TAG, "Dropping unconfirmed provisional lock on static background/wall after 35 frames")
+                unlock()
+                return
+            }
+
             missedFrames++
             if (missedFrames <= MAX_MISSED_FRAMES && currentActive != null) {
                 // High-speed occlusion trajectory preservation (2nd-order with decay)
@@ -555,6 +697,7 @@ class SubjectTracker(
 
     fun close() {
         try {
+            adaptiveLearner?.endSelectionSession(wasExplicitCorrection = false)
             detector.close()
         } catch (e: Exception) {
             Log.w(TAG, "Error closing detector: ${e.message}")

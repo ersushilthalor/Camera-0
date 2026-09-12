@@ -973,6 +973,14 @@ class Camera2Engine(private val context: Context) {
 
                     _previewBufferSize.value = optimalPreviewSize
                     texture.setDefaultBufferSize(optimalPreviewSize.width, optimalPreviewSize.height)
+                    try {
+                        previewSurface?.release()
+                    } catch (ignored: Exception) {}
+                    previewSurface = Surface(texture)
+                    try {
+                        previewSurface?.release()
+                    } catch (ignored: Exception) {}
+                    previewSurface = Surface(texture)
 
                     setupImageReaders(lens.cameraId)
                     createCameraCaptureSession()
@@ -2699,6 +2707,10 @@ class Camera2Engine(private val context: Context) {
                         override fun onConfigureFailed(session: CameraCaptureSession) {
                             Log.e(TAG, "Failed to configure Software Cinema recording capture session")
                             isSoftwareCinemaRecording = false
+                            try {
+                                cinemaSoftwareRecorder.stopRecording()
+                            } catch (ignored: Exception) {}
+                            onError("Failed to configure cinema recording capture session")
                         }
                     },
                     backgroundHandler

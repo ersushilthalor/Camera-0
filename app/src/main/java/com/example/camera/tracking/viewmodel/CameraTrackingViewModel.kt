@@ -15,6 +15,7 @@ import com.example.camera.tracking.engine.AspectRatioCropEngine
 import com.example.camera.tracking.engine.CropController
 import com.example.camera.tracking.engine.DigitalGimbalEngine
 import com.example.camera.tracking.engine.TrackedVideoRecorder
+import com.example.camera.tracking.ml.AdaptiveTrackingLearner
 import com.example.camera.tracking.ml.SubjectTracker
 import com.example.camera.tracking.model.*
 import com.example.camera.tracking.util.MediaStorageHelper
@@ -83,11 +84,14 @@ class CameraTrackingViewModel(application: Application) : AndroidViewModel(appli
     // Continuous 60fps smoothing loop
     private var smoothingLoopJob: Job? = null
 
+    // Adaptive tracking learner instance
+    private var adaptiveLearner: AdaptiveTrackingLearner? = null
+
     // Auto-lock on first detected subject flag
     private var hasAutoLocked = false
 
     init {
-        // Start continuous 60 FPS crop smoothing and kinematic prediction loop
+        // Start continuous crop smoothing and kinematic prediction loop
         startSmoothingLoop()
     }
 
@@ -96,6 +100,13 @@ class CameraTrackingViewModel(application: Application) : AndroidViewModel(appli
      */
     fun initCamera(lifecycleOwner: LifecycleOwner, context: Context) {
         if (cameraXManager != null) return
+
+        if (adaptiveLearner == null) {
+            val learner = AdaptiveTrackingLearner(context.applicationContext)
+            adaptiveLearner = learner
+            subjectTracker.adaptiveLearner = learner
+            _uiState.update { it.copy(learnedSubjectsCount = learner.getLearnedProfilesCount()) }
+        }
 
         digitalGimbalEngine.isEnabled = _uiState.value.isGimbalEnabled
         digitalGimbalEngine.start()
@@ -108,7 +119,8 @@ class CameraTrackingViewModel(application: Application) : AndroidViewModel(appli
             }
         )
         cameraXManager = manager
-        manager.startCamera(useFrontCamera = _uiState.value.isFrontCamera)
+        manager.setFps(_uiState.value.selectedFpsOption)
+        manager.startCamera(lens = _uiState.value.selectedLens)
     }
 
     private fun startSmoothingLoop() {
@@ -141,12 +153,16 @@ class CameraTrackingViewModel(application: Application) : AndroidViewModel(appli
                     )
                 } else if (!cropController.isCinematicPanActive) {
                     // Continuous automatic tracking: if candidates exist and no subject is locked,
-                    // auto-lock the most prominent candidate
+                    // auto-lock the most prominent candidate (humans & moving subjects prioritized)
                     val candidates = _uiState.value.allDetections
                     if (candidates.isNotEmpty() && !hasAutoLocked) {
-                        val best = candidates.maxByOrNull { it.bounds.width * it.bounds.height } ?: candidates.first()
-                        subjectTracker.selectSubjectAt(best.bounds.centerX, best.bounds.centerY, candidates, latestSourceBitmap)
-                        hasAutoLocked = true
+                        // Strictly only track humans or genuinely moving subjects; never static objects
+                        val eligible = candidates.filter { it.isHuman || it.isMoving }
+                        val best = eligible.maxByOrNull { it.bounds.width * it.bounds.height + it.learnedAffinity * 0.5f }
+                        if (best != null) {
+                            subjectTracker.selectSubjectAt(best.bounds.centerX, best.bounds.centerY, candidates, latestSourceBitmap)
+                            hasAutoLocked = true
+                        }
                     } else if (candidates.isEmpty()) {
                         hasAutoLocked = false
                         cropController.setTarget(null, activeTracking = false, desiredZoom = 1.0f)
@@ -162,17 +178,21 @@ class CameraTrackingViewModel(application: Application) : AndroidViewModel(appli
                     }
                 }
 
+                val learnedCount = adaptiveLearner?.getLearnedProfilesCount() ?: 0
+
                 _uiState.update {
                     it.copy(
                         cropWindow = newCrop,
                         currentZoom = newCrop.zoomFactor,
                         gimbalState = gimbalState,
                         isCinematicPanActive = cropController.isCinematicPanActive,
-                        cinematicPanProgress = cropController.cinematicPanProgress
+                        cinematicPanProgress = cropController.cinematicPanProgress,
+                        learnedSubjectsCount = learnedCount
                     )
                 }
 
-                delay(16) // ~60 FPS
+                val delayMs = _uiState.value.selectedFpsOption.loopDelayMs
+                delay(delayMs)
             }
         }
     }
@@ -407,9 +427,24 @@ class CameraTrackingViewModel(application: Application) : AndroidViewModel(appli
     }
 
     fun flipCamera() {
-        val next = !_uiState.value.isFrontCamera
-        _uiState.update { it.copy(isFrontCamera = next) }
-        cameraXManager?.toggleCamera()
+        val nextLens = if (_uiState.value.selectedLens.isFront) TrackingCameraLens.WIDE else TrackingCameraLens.FRONT
+        setCameraLens(nextLens)
+    }
+
+    fun setCameraLens(lens: TrackingCameraLens) {
+        _uiState.update { it.copy(selectedLens = lens, isFrontCamera = lens.isFront) }
+        cameraXManager?.setLens(lens)
+    }
+
+    fun setTrackingFps(fpsOption: TrackingFpsOption) {
+        _uiState.update { it.copy(selectedFpsOption = fpsOption) }
+        cameraXManager?.setFps(fpsOption)
+        startSmoothingLoop()
+    }
+
+    fun clearLearnedSubjects() {
+        adaptiveLearner?.clearLearnedProfiles()
+        _uiState.update { it.copy(learnedSubjectsCount = 0) }
     }
 
     fun openMediaReview(item: CapturedMediaItem) {

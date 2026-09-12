@@ -91,6 +91,32 @@ data class GimbalState(
 )
 
 /**
+ * Selectable Camera Lenses for AI Tracking (Ultra-Wide, Main Wide, Front Selfie).
+ */
+enum class TrackingCameraLens(
+    val label: String,
+    val zoomLabel: String,
+    val isFront: Boolean = false
+) {
+    ULTRAWIDE("Ultra-Wide", "0.5×", false),
+    WIDE("Wide (Main)", "1.0×", false),
+    FRONT("Front Selfie", "Front", true)
+}
+
+/**
+ * Selectable Tracking Processing Rates.
+ */
+enum class TrackingFpsOption(
+    val label: String,
+    val targetFps: Int,
+    val loopDelayMs: Long
+) {
+    FPS_30("30 FPS", 30, 33L),
+    FPS_60("60 FPS", 60, 16L),
+    FPS_MAX("MAX / 120 FPS", 120, 8L)
+}
+
+/**
  * A tracked subject detected by AI or manual lock.
  */
 data class TrackedSubject(
@@ -105,7 +131,11 @@ data class TrackedSubject(
     val colorHistogram: FloatArray? = null,
     val lockQuality: Float = 1.0f,
     val lastSeenTimestamp: Long = System.currentTimeMillis(),
-    val isConfirmedByAi: Boolean = true
+    val isConfirmedByAi: Boolean = true,
+    val isHuman: Boolean = false,
+    val isMoving: Boolean = false,
+    val movementSpeed: Float = 0f,
+    val learnedAffinity: Float = 0f
 )
 
 /**
@@ -202,5 +232,13 @@ data class CameraTrackingUiState(
     val videoResolution: VideoResolution = VideoResolution.FHD_1080P,
     val viewfinderResolution: ViewfinderResolution = ViewfinderResolution.FHD_1080P,
     val isFrontCamera: Boolean = false,
-    val isTorchOn: Boolean = false
+    val isTorchOn: Boolean = false,
+    val selectedLens: TrackingCameraLens = TrackingCameraLens.WIDE,
+    val availableLenses: List<TrackingCameraLens> = listOf(
+        TrackingCameraLens.ULTRAWIDE,
+        TrackingCameraLens.WIDE,
+        TrackingCameraLens.FRONT
+    ),
+    val selectedFpsOption: TrackingFpsOption = TrackingFpsOption.FPS_60,
+    val learnedSubjectsCount: Int = 0
 )

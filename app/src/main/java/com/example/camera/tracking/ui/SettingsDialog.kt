@@ -30,6 +30,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.camera.tracking.model.TrackingAspectRatio
+import com.example.camera.tracking.model.TrackingCameraLens
+import com.example.camera.tracking.model.TrackingFpsOption
 import com.example.camera.tracking.model.VideoResolution
 import com.example.camera.tracking.model.ViewfinderResolution
 import com.example.camera.tracking.viewmodel.CameraTrackingUiState
@@ -43,6 +45,9 @@ fun SettingsBottomSheet(
     onTrackingIntensityChanged: (Float) -> Unit,
     onVideoResolutionChanged: (VideoResolution) -> Unit,
     onViewfinderResolutionChanged: (ViewfinderResolution) -> Unit = {},
+    onCameraLensChanged: (TrackingCameraLens) -> Unit = {},
+    onFpsOptionChanged: (TrackingFpsOption) -> Unit = {},
+    onClearLearnedProfiles: () -> Unit = {},
     onToggleGimbal: (Boolean) -> Unit,
     onGimbalSensitivityChanged: (Float) -> Unit,
     onStartCinematicPan: (durationSec: Float) -> Unit,
@@ -510,6 +515,162 @@ fun SettingsBottomSheet(
                             )
                         }
                     }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+            HorizontalDivider(color = Color(0xFF1E293B))
+
+            // 7. CAMERA LENS (ULTRA-WIDE + FRONT)
+            Spacer(modifier = Modifier.height(12.dp))
+            SettingSectionHeader(
+                icon = Icons.Default.CropFree,
+                title = "Camera Lens Selection",
+                subtitle = "Switch between Ultra-Wide 0.5×, Main 1× Wide, or Front Camera for subject tracking"
+            )
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                TrackingCameraLens.values().forEach { lens ->
+                    val isSelected = uiState.selectedLens == lens
+                    Card(
+                        colors = CardDefaults.cardColors(
+                            containerColor = if (isSelected) Color(0xFF7C3AED) else Color(0xFF1E293B)
+                        ),
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier
+                            .weight(1f)
+                            .clickable { onCameraLensChanged(lens) }
+                            .testTag("lens_${lens.name}")
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(10.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Text(
+                                text = lens.label,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color.White
+                            )
+                            Text(
+                                text = if (lens.isFront) "Selfie" else "Back",
+                                fontSize = 10.sp,
+                                color = if (isSelected) Color(0xFFDDD6FE) else Color(0xFF94A3B8)
+                            )
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+            HorizontalDivider(color = Color(0xFF1E293B))
+
+            // 8. SELECTABLE TRACKING FPS
+            Spacer(modifier = Modifier.height(12.dp))
+            SettingSectionHeader(
+                icon = Icons.Default.Speed,
+                title = "Tracking Processing Rate (FPS)",
+                subtitle = "Selectable tracking frequency supported by device sensor and AI engine"
+            )
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                TrackingFpsOption.values().forEach { fpsOpt ->
+                    val isSelected = uiState.selectedFpsOption == fpsOpt
+                    Card(
+                        colors = CardDefaults.cardColors(
+                            containerColor = if (isSelected) Color(0xFF2563EB) else Color(0xFF1E293B)
+                        ),
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier
+                            .weight(1f)
+                            .clickable { onFpsOptionChanged(fpsOpt) }
+                            .testTag("tracking_fps_${fpsOpt.name}")
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(10.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Text(
+                                text = fpsOpt.label,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color.White
+                            )
+                            Text(
+                                text = if (fpsOpt == TrackingFpsOption.FPS_30) "Efficient" else if (fpsOpt == TrackingFpsOption.FPS_60) "Smooth" else "Max Speed",
+                                fontSize = 10.sp,
+                                color = if (isSelected) Color(0xFFBFDBFE) else Color(0xFF94A3B8)
+                            )
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+            HorizontalDivider(color = Color(0xFF1E293B))
+
+            // 9. ADAPTIVE SUBJECT LEARNING
+            Spacer(modifier = Modifier.height(12.dp))
+            SettingSectionHeader(
+                icon = Icons.Default.Tune,
+                title = "Adaptive Subject Learning",
+                subtitle = "Locally learns persistent appearance signatures of your tracked subjects to improve future reacquisition"
+            )
+
+            Surface(
+                color = Color(0xFF1E293B),
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 8.dp)
+            ) {
+                Column(modifier = Modifier.padding(12.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column {
+                            Text(
+                                text = "Learned Subject Profiles",
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = Color.White
+                            )
+                            Text(
+                                text = "${uiState.learnedSubjectsCount} persistent subject profile(s) stored",
+                                fontSize = 11.sp,
+                                color = Color(0xFF38BDF8)
+                            )
+                        }
+
+                        Button(
+                            onClick = onClearLearnedProfiles,
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDC2626)),
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.testTag("clear_learned_profiles_btn")
+                        ) {
+                            Text("Reset Memory", fontSize = 11.sp)
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = "• Negative Learning Filter: Strictly ignores static walls, background, and furniture to prevent false profile learning.\n• On-Device Privacy: Subject profiles are processed purely in local memory.",
+                        fontSize = 11.sp,
+                        color = Color(0xFF94A3B8),
+                        lineHeight = 15.sp
+                    )
                 }
             }
 

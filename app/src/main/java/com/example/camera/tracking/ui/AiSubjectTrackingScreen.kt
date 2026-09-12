@@ -73,6 +73,8 @@ fun AiSubjectTrackingScreen(
             onToggleGimbal = { viewModel.toggleGimbal(it) },
             onStartCinematicPan = { viewModel.startCinematicPan(it) },
             onStopCinematicPan = { viewModel.stopCinematicPan() },
+            onCameraLensChanged = { viewModel.setCameraLens(it) },
+            onFpsOptionChanged = { viewModel.setTrackingFps(it) },
             modifier = Modifier.fillMaxSize()
         )
 
@@ -85,6 +87,9 @@ fun AiSubjectTrackingScreen(
                 onTrackingIntensityChanged = { viewModel.setTrackingIntensity(it) },
                 onVideoResolutionChanged = { viewModel.setVideoResolution(it) },
                 onViewfinderResolutionChanged = { viewModel.setViewfinderResolution(it) },
+                onCameraLensChanged = { viewModel.setCameraLens(it) },
+                onFpsOptionChanged = { viewModel.setTrackingFps(it) },
+                onClearLearnedProfiles = { viewModel.clearLearnedSubjects() },
                 onToggleGimbal = { viewModel.toggleGimbal(it) },
                 onGimbalSensitivityChanged = { viewModel.setGimbalSensitivity(it) },
                 onStartCinematicPan = { viewModel.startCinematicPan(it) },
