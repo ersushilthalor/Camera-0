@@ -100,7 +100,8 @@ private fun TopFixedControlsBar(
     onToggleGimbal: (Boolean) -> Unit,
     onStartCinematicPan: (Float) -> Unit,
     onStopCinematicPan: () -> Unit,
-    onCameraLensChanged: (TrackingCameraLens) -> Unit = {}
+    onCameraLensChanged: (TrackingCameraLens) -> Unit = {},
+    onFpsOptionChanged: (TrackingFpsOption) -> Unit = {}
 ) {
     Column(
         modifier = Modifier

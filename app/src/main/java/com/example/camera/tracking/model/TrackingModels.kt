@@ -100,7 +100,9 @@ enum class TrackingCameraLens(
 ) {
     ULTRAWIDE("Ultra-Wide", "0.5×", false),
     WIDE("Wide (Main)", "1.0×", false),
-    FRONT("Front Selfie", "Front", true)
+    FRONT("Front Selfie", "Front", true);
+
+    val displayName: String get() = "$zoomLabel $label"
 }
 
 /**

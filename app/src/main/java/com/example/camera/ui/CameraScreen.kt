@@ -206,12 +206,6 @@ fun CameraScreen(
             (cameraMode == CameraMode.PORTRAIT && isPortraitSettingsOpen) ||
             isVideoSettingsPanelOpen
 
-    val viewfinderBlurRadius by androidx.compose.animation.core.animateDpAsState(
-        targetValue = if (isAnyWindowOpen || isSettingsOpen) 22.dp else 0.dp,
-        animationSpec = androidx.compose.animation.core.tween(durationMillis = 260),
-        label = "viewfinderGlassBlur"
-    )
-
     Box(
         modifier = modifier
             .fillMaxSize()
@@ -245,9 +239,7 @@ fun CameraScreen(
                 viewModel.toggleAeAfLock()
             },
             currentExposureCompensation = exposureCompensation,
-            modifier = Modifier
-                .fillMaxSize()
-                .then(if (viewfinderBlurRadius > 0.dp) Modifier.blur(viewfinderBlurRadius) else Modifier)
+            modifier = Modifier.fillMaxSize()
         )
 
         // 1b. Cinema Viewfinder Assist Overlays (Waveform, Peaking, Zebras)

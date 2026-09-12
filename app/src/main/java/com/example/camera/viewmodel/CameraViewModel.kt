@@ -461,6 +461,15 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         _cameraMode.value = mode
         preferences.cameraMode = mode
 
+        // Apply true 9:16 aspect ratio for Video and Cinema modes before session reconfiguration
+        if (mode == CameraMode.VIDEO || mode == CameraMode.CINEMA || mode == CameraMode.DOLLY_ZOOM) {
+            _selectedAspectRatio.value = CameraAspectRatio.RATIO_9_16
+            engine.setPreviewAspectRatio(16f / 9f)
+        } else if (mode == CameraMode.PHOTO || mode == CameraMode.PORTRAIT || mode == CameraMode.NIGHT || mode == CameraMode.MORE) {
+            _selectedAspectRatio.value = CameraAspectRatio.RATIO_4_3
+            engine.setPreviewAspectRatio(4f / 3f)
+        }
+
         if (mode == CameraMode.DUAL_VIDEO) {
             engine.closeCamera()
             dualCameraManager.prepareDualCameras()
@@ -470,15 +479,6 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                 engine.startCamera()
             }
             engine.setMode(mode)
-        }
-
-        // Apply true 9:16 aspect ratio for Video and Cinema modes
-        if (mode == CameraMode.VIDEO || mode == CameraMode.CINEMA) {
-            _selectedAspectRatio.value = CameraAspectRatio.RATIO_9_16
-            engine.setPreviewAspectRatio(16f / 9f)
-        } else if (mode == CameraMode.PHOTO || mode == CameraMode.PORTRAIT) {
-            _selectedAspectRatio.value = CameraAspectRatio.RATIO_4_3
-            engine.setPreviewAspectRatio(4f / 3f)
         }
 
         _isCinemaSettingsOpen.value = false

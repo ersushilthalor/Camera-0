@@ -950,6 +950,7 @@ class Camera2Engine(private val context: Context) {
         backgroundHandler?.post {
             synchronized(cameraLifecycleLock) {
                 try {
+                    val camera = cameraDevice ?: return@synchronized
                     val lens = _selectedLens.value ?: return@synchronized
                     val texture = previewSurfaceTexture ?: return@synchronized
                     val chars = getCharacteristics(lens.cameraId) ?: return@synchronized
@@ -973,10 +974,18 @@ class Camera2Engine(private val context: Context) {
 
                     _previewBufferSize.value = optimalPreviewSize
                     texture.setDefaultBufferSize(optimalPreviewSize.width, optimalPreviewSize.height)
+
+                    // Safely close previous session before releasing previewSurface
                     try {
-                        previewSurface?.release()
-                    } catch (ignored: Exception) {}
-                    previewSurface = Surface(texture)
+                        captureSession?.stopRepeating()
+                        captureSession?.abortCaptures()
+                    } catch (ignored: Throwable) {}
+                    try {
+                        captureSession?.close()
+                    } catch (ignored: Throwable) {}
+                    captureSession = null
+                    _isCameraReady.value = false
+
                     try {
                         previewSurface?.release()
                     } catch (ignored: Exception) {}
@@ -1010,10 +1019,15 @@ class Camera2Engine(private val context: Context) {
      * Attach viewfinder surface texture from Compose AndroidView
      */
     fun setPreviewSurfaceTexture(texture: SurfaceTexture?) {
+        val prevTexture = previewSurfaceTexture
         previewSurfaceTexture = texture
         if (texture != null) {
-            if (_isCameraInitialized.value) {
-                startCamera()
+            if (prevTexture != texture || cameraDevice == null) {
+                if (_isCameraInitialized.value) {
+                    startCamera()
+                }
+            } else if (captureSession == null) {
+                reconfigureSession()
             }
         } else {
             closeCamera()
@@ -1040,6 +1054,18 @@ class Camera2Engine(private val context: Context) {
         val mgr = cameraManager ?: return
 
         startBackgroundThread()
+
+        synchronized(cameraLifecycleLock) {
+            if (isStartingCamera) {
+                restartPending = true
+                return
+            }
+            if (cameraDevice != null) {
+                reconfigureSession()
+                return
+            }
+            isStartingCamera = true
+        }
 
         try {
             val chars = getCharacteristics(lens.cameraId) ?: return
@@ -1075,14 +1101,6 @@ class Camera2Engine(private val context: Context) {
 
             // Setup ImageReader for Photo mode
             setupImageReaders(lens.cameraId)
-
-            synchronized(cameraLifecycleLock) {
-                if (isStartingCamera) {
-                    restartPending = true
-                    return
-                }
-                isStartingCamera = true
-            }
 
             mgr.openCamera(lens.cameraId, object : CameraDevice.StateCallback() {
                 override fun onOpened(camera: CameraDevice) {
@@ -3229,9 +3247,7 @@ class Camera2Engine(private val context: Context) {
                     return@synchronized
                 }
                 closeCameraInternal()
-                backgroundHandler?.postDelayed({
-                    startCamera()
-                }, 75)
+                startCamera()
             }
         } ?: run {
             closeCamera()

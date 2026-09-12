@@ -120,12 +120,8 @@ fun Viewfinder(
                     kotlin.math.min(previewBufferSize.width, previewBufferSize.height).toFloat()
         } else null
 
-        // Validate buffer ratio against active mode to prevent stale transition distortion
-        val finalRatio = if (bufRatio != null && kotlin.math.abs(bufRatio - targetModeRatio) < 0.20f) {
-            bufRatio
-        } else {
-            targetModeRatio
-        }
+        // Use active buffer ratio to ensure exact 1:1 pixel match with 0 vertical or horizontal stretch
+        val finalRatio = bufRatio ?: targetModeRatio
 
         // Exact aspect ratio geometry: targetHeight is strictly targetWidth * finalRatio
         var calcWidth = containerWidth
@@ -188,6 +184,11 @@ fun Viewfinder(
                                 }
                                 override fun onSurfaceTextureUpdated(st: SurfaceTexture) {}
                             }
+                        }
+                    },
+                    update = { textureView ->
+                        if (textureView.isAvailable && textureView.surfaceTexture != null) {
+                            onSurfaceTextureAvailable(textureView.surfaceTexture)
                         }
                     },
                     modifier = Modifier.fillMaxSize()
