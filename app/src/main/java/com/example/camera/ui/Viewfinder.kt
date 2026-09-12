@@ -186,10 +186,8 @@ fun Viewfinder(
                             }
                         }
                     },
-                    update = { textureView ->
-                        if (textureView.isAvailable && textureView.surfaceTexture != null) {
-                            onSurfaceTextureAvailable(textureView.surfaceTexture)
-                        }
+                    update = {
+                        // SurfaceTexture lifecycle is handled by SurfaceTextureListener callbacks
                     },
                     modifier = Modifier.fillMaxSize()
                 )

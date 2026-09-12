@@ -475,7 +475,12 @@ fun CameraScreen(
         // 3e. Dedicated More Modes Drawer
         MoreModesDrawer(
             isOpen = isMoreModesOpen,
-            onDismissRequest = { viewModel.setMoreModesOpen(false) },
+            onDismissRequest = {
+                viewModel.setMoreModesOpen(false)
+                if (cameraMode == CameraMode.MORE) {
+                    viewModel.setCameraMode(CameraMode.PHOTO)
+                }
+            },
             onSelectProManual = {
                 viewModel.setMoreModesOpen(false)
                 viewModel.setCameraMode(CameraMode.PHOTO)
@@ -508,6 +513,9 @@ fun CameraScreen(
             },
             onOpenSettings = {
                 viewModel.setMoreModesOpen(false)
+                if (cameraMode == CameraMode.MORE) {
+                    viewModel.setCameraMode(CameraMode.PHOTO)
+                }
                 viewModel.setSettingsOpen(true)
             },
             modifier = Modifier
@@ -624,7 +632,12 @@ fun CameraScreen(
             onSaveSelfieAsPreviewedToggle = { viewModel.setSaveSelfieAsPreviewed(it) },
             onGridTypeSelected = { viewModel.setGridType(it) },
             onCinemaConfigChange = { viewModel.updateCinemaConfig(it) },
-            onDismiss = { viewModel.setSettingsOpen(false) }
+            onDismiss = {
+                viewModel.setSettingsOpen(false)
+                if (cameraMode == CameraMode.MORE) {
+                    viewModel.setCameraMode(CameraMode.PHOTO)
+                }
+            }
         )
 
         // 7. Full-Screen Media Viewer Dialog

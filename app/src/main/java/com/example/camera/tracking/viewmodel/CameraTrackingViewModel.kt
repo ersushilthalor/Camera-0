@@ -87,9 +87,6 @@ class CameraTrackingViewModel(application: Application) : AndroidViewModel(appli
     // Adaptive tracking learner instance
     private var adaptiveLearner: AdaptiveTrackingLearner? = null
 
-    // Auto-lock on first detected subject flag
-    private var hasAutoLocked = false
-
     init {
         // Start continuous crop smoothing and kinematic prediction loop
         startSmoothingLoop()
@@ -152,21 +149,9 @@ class CameraTrackingViewModel(application: Application) : AndroidViewModel(appli
                         desiredZoom = 3.0f
                     )
                 } else if (!cropController.isCinematicPanActive) {
-                    // Continuous automatic tracking: if candidates exist and no subject is locked,
-                    // auto-lock the most prominent candidate (humans & moving subjects prioritized)
-                    val candidates = _uiState.value.allDetections
-                    if (candidates.isNotEmpty() && !hasAutoLocked) {
-                        // Strictly only track humans or genuinely moving subjects; never static objects
-                        val eligible = candidates.filter { it.isHuman || it.isMoving }
-                        val best = eligible.maxByOrNull { it.bounds.width * it.bounds.height + it.learnedAffinity * 0.5f }
-                        if (best != null) {
-                            subjectTracker.selectSubjectAt(best.bounds.centerX, best.bounds.centerY, candidates, latestSourceBitmap)
-                            hasAutoLocked = true
-                        }
-                    } else if (candidates.isEmpty()) {
-                        hasAutoLocked = false
-                        cropController.setTarget(null, activeTracking = false, desiredZoom = 1.0f)
-                    }
+                    // Manual tracking only: When no subject is locked, maintain wide view (1.0x).
+                    // Tracking must start only when the user explicitly taps a subject.
+                    cropController.setTarget(null, activeTracking = false, desiredZoom = 1.0f)
                 }
 
                 val newCrop = cropController.update(dt)
@@ -233,7 +218,6 @@ class CameraTrackingViewModel(application: Application) : AndroidViewModel(appli
     fun onTapToTrack(vfX: Float, vfY: Float) {
         val currentCrop = _uiState.value.cropWindow
         val srcPoint = cropController.mapViewfinderToSource(vfX, vfY, currentCrop)
-        hasAutoLocked = true
         subjectTracker.selectSubjectAt(
             srcX = srcPoint.x,
             srcY = srcPoint.y,
@@ -246,7 +230,6 @@ class CameraTrackingViewModel(application: Application) : AndroidViewModel(appli
      * Unlocks subject tracking and zooms back out to 1.0x wide.
      */
     fun unlockTracking() {
-        hasAutoLocked = true // User explicitly unlocked, don't immediately re-auto-lock
         subjectTracker.unlock()
         cropController.setTarget(null, activeTracking = false, desiredZoom = 1.0f)
     }

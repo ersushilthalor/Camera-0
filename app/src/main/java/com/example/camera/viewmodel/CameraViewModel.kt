@@ -470,12 +470,16 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             engine.setPreviewAspectRatio(4f / 3f)
         }
 
-        if (mode == CameraMode.DUAL_VIDEO) {
+        if (mode == CameraMode.DUAL_VIDEO || mode == CameraMode.AI_SUBJECT_TRACKING) {
             engine.closeCamera()
-            dualCameraManager.prepareDualCameras()
+            if (mode == CameraMode.DUAL_VIDEO) {
+                dualCameraManager.prepareDualCameras()
+            }
         } else {
             if (previousMode == CameraMode.DUAL_VIDEO) {
                 dualCameraManager.closeStreams()
+                engine.startCamera()
+            } else if (previousMode == CameraMode.AI_SUBJECT_TRACKING) {
                 engine.startCamera()
             }
             engine.setMode(mode)

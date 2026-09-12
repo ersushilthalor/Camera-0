@@ -198,6 +198,8 @@ class Camera2Engine(private val context: Context) {
     @Volatile
     private var isClosingCamera = false
     @Volatile
+    private var isConfiguringSession = false
+    @Volatile
     private var restartPending = false
     private var zoomDebounceJob: Job? = null
 
@@ -910,8 +912,9 @@ class Camera2Engine(private val context: Context) {
      */
     fun setMode(mode: CameraMode) {
         if (currentMode == mode) return
-        val wasPhotoOrPortrait = (currentMode == CameraMode.PHOTO || currentMode == CameraMode.PORTRAIT || currentMode == CameraMode.MORE)
-        val isPhotoOrPortrait = (mode == CameraMode.PHOTO || mode == CameraMode.PORTRAIT || mode == CameraMode.MORE)
+        val wasPhotoOrPortrait = (currentMode == CameraMode.PHOTO || currentMode == CameraMode.PORTRAIT)
+        val isPhotoOrPortrait = (mode == CameraMode.PHOTO || mode == CameraMode.PORTRAIT)
+        val wasMore = (currentMode == CameraMode.MORE)
         if (_isRecordingVideo.value) {
             stopVideoRecording()
         }
@@ -927,7 +930,12 @@ class Camera2Engine(private val context: Context) {
             gyroStabilizationEngine.start()
         }
 
-        if (wasPhotoOrPortrait != isPhotoOrPortrait) {
+        val needsReconfigure = (wasPhotoOrPortrait != isPhotoOrPortrait) ||
+                (wasMore && isPhotoOrPortrait) ||
+                (captureSession == null) ||
+                (!_isCameraReady.value)
+
+        if (needsReconfigure) {
             if (cameraDevice != null) {
                 reconfigureSession()
             } else {
@@ -949,12 +957,32 @@ class Camera2Engine(private val context: Context) {
         }
         backgroundHandler?.post {
             synchronized(cameraLifecycleLock) {
+                if (isConfiguringSession || isStartingCamera) {
+                    Log.d(TAG, "reconfigureSession already in progress, skipping")
+                    return@synchronized
+                }
+                isConfiguringSession = true
                 try {
-                    val camera = cameraDevice ?: return@synchronized
-                    val lens = _selectedLens.value ?: return@synchronized
-                    val texture = previewSurfaceTexture ?: return@synchronized
-                    val chars = getCharacteristics(lens.cameraId) ?: return@synchronized
-                    val map = chars.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP) ?: return@synchronized
+                    val camera = cameraDevice ?: run {
+                        isConfiguringSession = false
+                        return@synchronized
+                    }
+                    val lens = _selectedLens.value ?: run {
+                        isConfiguringSession = false
+                        return@synchronized
+                    }
+                    val texture = previewSurfaceTexture ?: run {
+                        isConfiguringSession = false
+                        return@synchronized
+                    }
+                    val chars = getCharacteristics(lens.cameraId) ?: run {
+                        isConfiguringSession = false
+                        return@synchronized
+                    }
+                    val map = chars.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP) ?: run {
+                        isConfiguringSession = false
+                        return@synchronized
+                    }
                     val previewSizes = map.getOutputSizes(SurfaceTexture::class.java) ?: emptyArray()
 
                     val targetRatio = _previewAspectRatio.value
@@ -975,7 +1003,7 @@ class Camera2Engine(private val context: Context) {
                     _previewBufferSize.value = optimalPreviewSize
                     texture.setDefaultBufferSize(optimalPreviewSize.width, optimalPreviewSize.height)
 
-                    // Safely close previous session before releasing previewSurface
+                    // Safely close previous session before reconfiguring
                     try {
                         captureSession?.stopRepeating()
                         captureSession?.abortCaptures()
@@ -986,14 +1014,19 @@ class Camera2Engine(private val context: Context) {
                     captureSession = null
                     _isCameraReady.value = false
 
-                    try {
-                        previewSurface?.release()
-                    } catch (ignored: Exception) {}
-                    previewSurface = Surface(texture)
+                    // Reuse existing valid surface if available to avoid BufferQueue disconnects
+                    val curSurf = previewSurface
+                    if (curSurf == null || !curSurf.isValid) {
+                        try {
+                            curSurf?.release()
+                        } catch (ignored: Exception) {}
+                        previewSurface = Surface(texture)
+                    }
 
                     setupImageReaders(lens.cameraId)
                     createCameraCaptureSession()
                 } catch (e: Exception) {
+                    isConfiguringSession = false
                     Log.e(TAG, "reconfigureSession failed, falling back to restartCamera", e)
                     restartCamera()
                 }
@@ -1026,7 +1059,7 @@ class Camera2Engine(private val context: Context) {
                 if (_isCameraInitialized.value) {
                     startCamera()
                 }
-            } else if (captureSession == null) {
+            } else if (captureSession == null && !isConfiguringSession && !isStartingCamera) {
                 reconfigureSession()
             }
         } else {
@@ -1253,6 +1286,7 @@ class Camera2Engine(private val context: Context) {
                     java.util.concurrent.Executors.newSingleThreadExecutor(),
                     object : CameraCaptureSession.StateCallback() {
                         override fun onConfigured(session: CameraCaptureSession) {
+                            isConfiguringSession = false
                             if (cameraDevice == null) return
                             captureSession = session
                             try {
@@ -1266,6 +1300,7 @@ class Camera2Engine(private val context: Context) {
                         }
 
                         override fun onConfigureFailed(session: CameraCaptureSession) {
+                            isConfiguringSession = false
                             Log.e(TAG, "Camera capture session configuration failed, scheduling recovery")
                             _isCameraReady.value = false
                             backgroundHandler?.postDelayed({
@@ -1299,6 +1334,7 @@ class Camera2Engine(private val context: Context) {
                 surfaces,
                 object : CameraCaptureSession.StateCallback() {
                     override fun onConfigured(session: CameraCaptureSession) {
+                        isConfiguringSession = false
                         if (cameraDevice == null) return
                         captureSession = session
                         try {
@@ -1312,6 +1348,7 @@ class Camera2Engine(private val context: Context) {
                     }
 
                     override fun onConfigureFailed(session: CameraCaptureSession) {
+                        isConfiguringSession = false
                         Log.e(TAG, "Camera capture session configuration failed, scheduling recovery")
                         _isCameraReady.value = false
                         backgroundHandler?.postDelayed({
@@ -1322,6 +1359,7 @@ class Camera2Engine(private val context: Context) {
                 backgroundHandler
             )
         } catch (e: Exception) {
+            isConfiguringSession = false
             Log.e(TAG, "Failed to create camera capture session", e)
         }
     }

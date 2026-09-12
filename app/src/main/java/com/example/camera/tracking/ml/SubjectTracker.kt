@@ -91,17 +91,20 @@ class SubjectTracker(
         val safeX = if (srcX.isFinite()) srcX.coerceIn(0f, 1f) else 0.5f
         val safeY = if (srcY.isFinite()) srcY.coerceIn(0f, 1f) else 0.5f
 
-        val hit = allCurrentDetections.firstOrNull { it.bounds.contains(safeX, safeY) }
-            ?: allCurrentDetections.minByOrNull {
+        // STRICT ENFORCEMENT: Only allow selecting humans or moving subjects; NEVER static objects
+        val eligible = allCurrentDetections.filter { it.isHuman || it.isMoving }
+
+        val hit = eligible.firstOrNull { it.bounds.contains(safeX, safeY) }
+            ?: eligible.minByOrNull {
                 hypot((it.bounds.centerX - safeX).toDouble(), (it.bounds.centerY - safeY).toDouble())
             }?.takeIf {
                 val dist = hypot((it.bounds.centerX - safeX).toDouble(), (it.bounds.centerY - safeY).toDouble())
-                dist < 0.32
+                dist < 0.28
             }
 
         if (hit != null) {
             val signature = extractColorSignature(sourceBitmap, hit.bounds)
-            Log.d(TAG, "Ultra Lock acquired on AI object: ID=${hit.trackingId}, label=${hit.label}")
+            Log.d(TAG, "Lock acquired on manual tap: ID=${hit.trackingId}, label=${hit.label}")
             activeTrackingId = hit.trackingId
             activeSubject = hit.copy(
                 velocityX = 0f,
@@ -118,37 +121,9 @@ class SubjectTracker(
 
             adaptiveLearner?.startSelectionSession(hit, signature, hit.isHuman)
         } else {
-            val newId = provisionalIdCounter++
-            val halfSize = 0.09f
-            val initialBounds = NormalizedRect(
-                left = (safeX - halfSize).coerceAtLeast(0f),
-                top = (safeY - halfSize).coerceAtLeast(0f),
-                right = (safeX + halfSize).coerceAtMost(1f),
-                bottom = (safeY + halfSize).coerceAtMost(1f)
-            )
-            val signature = extractColorSignature(sourceBitmap, initialBounds)
-            val provisional = TrackedSubject(
-                trackingId = newId,
-                bounds = initialBounds,
-                label = "Target Subject",
-                confidence = 0.95f,
-                velocityX = 0f,
-                velocityY = 0f,
-                accelX = 0f,
-                accelY = 0f,
-                colorHistogram = signature,
-                lockQuality = 0.9f,
-                isConfirmedByAi = false,
-                isHuman = true // Assume tapped target is user subject
-            )
-            Log.d(TAG, "Ultra Provisional lock initiated at ($safeX, $safeY), ID=$newId")
-            activeTrackingId = newId
-            activeSubject = provisional
-            status = TrackingStatus.TRACKING_LOCKED
-            missedFrames = 0
-            provisionalTapCenter = PointF(safeX, safeY)
-
-            adaptiveLearner?.startSelectionSession(provisional, signature, isHuman = true)
+            // Manual tap on empty area or static object: Do NOT track random/static objects.
+            Log.d(TAG, "Tap at ($safeX, $safeY) did not hit a human or moving subject, ignoring.")
+            return
         }
         onStateUpdated(status, activeSubject, allCurrentDetections)
     }
@@ -469,7 +444,7 @@ class SubjectTracker(
             // Dynamic search radius scaled by speed intensity & subject velocity
             val searchRadius = (0.35f + velSpeed * 0.95f + (trackingSpeedIntensity - 1.0f).coerceAtLeast(0f) * 0.15f).coerceIn(0.35f, 0.85f)
 
-            val scoredCandidate = candidates.mapNotNull { cand ->
+            val scoredCandidate = candidates.filter { it.isHuman || it.isMoving }.mapNotNull { cand ->
                 val dist = hypot((cand.bounds.centerX - predX).toDouble(), (cand.bounds.centerY - predY).toDouble()).toFloat()
                 if (dist > searchRadius) return@mapNotNull null
 
@@ -477,6 +452,7 @@ class SubjectTracker(
                 val curArea = currentActive.bounds.width * currentActive.bounds.height
                 val candArea = cand.bounds.width * cand.bounds.height
                 val areaRatio = if (curArea > 0.001f) abs(candArea - curArea) / curArea else 0f
+                if (areaRatio > 1.2f) return@mapNotNull null // Reject candidates with radically different size
 
                 // Velocity alignment bonus
                 val dirBonus = if (velSpeed > 0.06f) {
@@ -492,14 +468,21 @@ class SubjectTracker(
                 val candSignature = extractColorSignature(sourceBitmap, cand.bounds)
                 val appearanceSim = compareSignatures(currentActive.colorHistogram, candSignature)
 
+                // STRICT LOCK: Never switch to another person/object.
+                // Candidate must either share the same tracking ID or have a high appearance signature similarity (>= 0.65)
+                val isSameIdentity = (cand.trackingId == targetId) || (appearanceSim >= 0.65f && dist < 0.25f)
+                if (!isSameIdentity) {
+                    return@mapNotNull null
+                }
+
                 // Total match cost: lower is better
-                val cost = (dist * 0.35f) - (iou * 0.35f) + (areaRatio.coerceAtMost(2.0f) * 0.12f) - (dirBonus * 0.12f) - (appearanceSim * 0.20f)
+                val cost = (dist * 0.40f) - (iou * 0.35f) + (areaRatio.coerceAtMost(2.0f) * 0.10f) - (dirBonus * 0.10f) - (appearanceSim * 0.25f)
                 Pair(cand, cost)
             }.minByOrNull { it.second }
 
-            if (scoredCandidate != null && scoredCandidate.second < 0.65f) {
+            if (scoredCandidate != null && scoredCandidate.second < 0.45f) {
                 val reacquired = scoredCandidate.first
-                Log.d(TAG, "Ultra-Intelligent reacquired: ID=${reacquired.trackingId}, cost=${scoredCandidate.second}")
+                Log.d(TAG, "Reacquired original locked subject: ID=${reacquired.trackingId}, cost=${scoredCandidate.second}")
                 activeTrackingId = reacquired.trackingId
                 matched = reacquired
             }

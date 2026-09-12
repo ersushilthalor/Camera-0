@@ -91,11 +91,7 @@ class CameraXManager(
     @androidx.annotation.OptIn(androidx.camera.camera2.interop.ExperimentalCamera2Interop::class)
     private fun bindCameraUseCases() {
         val provider = cameraProvider ?: return
-        val cameraSelector = if (activeLens.isFront) {
-            CameraSelector.DEFAULT_FRONT_CAMERA
-        } else {
-            CameraSelector.DEFAULT_BACK_CAMERA
-        }
+        val cameraSelector = buildCameraSelector()
 
         val targetFps = activeFpsOption.targetFps.coerceIn(30, 120)
         val bestFpsRange = getDeviceSupportedFpsRange(targetFps, activeLens.isFront)
@@ -195,6 +191,112 @@ class CameraXManager(
             activeCamera = null
         } catch (e: Exception) {
             Log.w(TAG, "Error stopping camera: ${e.message}")
+        }
+    }
+
+    @androidx.annotation.OptIn(androidx.camera.camera2.interop.ExperimentalCamera2Interop::class)
+    private fun buildCameraSelector(): CameraSelector {
+        if (activeLens.isFront) {
+            return CameraSelector.DEFAULT_FRONT_CAMERA
+        }
+
+        if (activeLens == TrackingCameraLens.ULTRAWIDE) {
+            val uwId = findUltraWideCameraId()
+            if (uwId != null) {
+                Log.d(TAG, "Selected physical Ultra Wide camera ID: $uwId")
+                return CameraSelector.Builder()
+                    .requireLensFacing(CameraSelector.LENS_FACING_BACK)
+                    .addCameraFilter { cameraInfos ->
+                        val matched = cameraInfos.filter { info ->
+                            try {
+                                androidx.camera.camera2.interop.Camera2CameraInfo.from(info).cameraId == uwId
+                            } catch (e: Exception) {
+                                false
+                            }
+                        }
+                        if (matched.isNotEmpty()) matched else cameraInfos
+                    }
+                    .build()
+            }
+            return CameraSelector.DEFAULT_BACK_CAMERA
+        }
+
+        // Default Main Wide (1x)
+        val mainId = findMainWideCameraId()
+        if (mainId != null) {
+            Log.d(TAG, "Selected physical Main Wide camera ID: $mainId")
+            return CameraSelector.Builder()
+                .requireLensFacing(CameraSelector.LENS_FACING_BACK)
+                .addCameraFilter { cameraInfos ->
+                    val matched = cameraInfos.filter { info ->
+                        try {
+                            androidx.camera.camera2.interop.Camera2CameraInfo.from(info).cameraId == mainId
+                        } catch (e: Exception) {
+                            false
+                        }
+                    }
+                    if (matched.isNotEmpty()) matched else cameraInfos
+                }
+                .build()
+        }
+        return CameraSelector.DEFAULT_BACK_CAMERA
+    }
+
+    private fun findUltraWideCameraId(): String? {
+        val cameraManager = context.getSystemService(Context.CAMERA_SERVICE) as? android.hardware.camera2.CameraManager ?: return null
+        var bestId: String? = null
+        var minFocal = Float.MAX_VALUE
+
+        try {
+            for (id in cameraManager.cameraIdList) {
+                val chars = cameraManager.getCameraCharacteristics(id)
+                val facing = chars.get(android.hardware.camera2.CameraCharacteristics.LENS_FACING)
+                if (facing == android.hardware.camera2.CameraCharacteristics.LENS_FACING_BACK) {
+                    val focalLengths = chars.get(android.hardware.camera2.CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS)
+                    val focal = focalLengths?.firstOrNull() ?: 4.0f
+                    val sensorSize = chars.get(android.hardware.camera2.CameraCharacteristics.SENSOR_INFO_PHYSICAL_SIZE)
+                    val fov = if (sensorSize != null && sensorSize.width > 0 && focal > 0) {
+                        (2.0 * kotlin.math.atan(sensorSize.width.toDouble() / (2.0 * focal.toDouble())) * (180.0 / Math.PI)).toFloat()
+                    } else 0f
+
+                    if (focal <= 2.8f || fov >= 85f) {
+                        return id
+                    }
+                    if (focal < minFocal) {
+                        minFocal = focal
+                        bestId = id
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Error finding physical ultra-wide camera: ${e.message}")
+        }
+        return if (minFocal < 3.2f) bestId else null
+    }
+
+    private fun findMainWideCameraId(): String? {
+        val cameraManager = context.getSystemService(Context.CAMERA_SERVICE) as? android.hardware.camera2.CameraManager ?: return null
+        try {
+            for (id in cameraManager.cameraIdList) {
+                val chars = cameraManager.getCameraCharacteristics(id)
+                val facing = chars.get(android.hardware.camera2.CameraCharacteristics.LENS_FACING)
+                if (facing == android.hardware.camera2.CameraCharacteristics.LENS_FACING_BACK) {
+                    val focalLengths = chars.get(android.hardware.camera2.CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS)
+                    val focal = focalLengths?.firstOrNull() ?: 4.0f
+                    // Typical main wide lens focal length is ~3.5mm - 6.5mm
+                    if (focal in 3.4f..7.0f) {
+                        return id
+                    }
+                }
+            }
+            // Fallback to first back camera
+            return cameraManager.cameraIdList.firstOrNull { id ->
+                cameraManager.getCameraCharacteristics(id).get(android.hardware.camera2.CameraCharacteristics.LENS_FACING) ==
+                        android.hardware.camera2.CameraCharacteristics.LENS_FACING_BACK
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Error finding physical main wide camera: ${e.message}")
+            return null
         }
     }
 
