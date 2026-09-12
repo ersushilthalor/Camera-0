@@ -1,0 +1,648 @@
+package com.example.camera.ui
+
+import android.hardware.camera2.CameraCharacteristics
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.*
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import coil.compose.AsyncImage
+import com.example.camera.model.*
+import kotlin.math.absoluteValue
+import kotlin.math.roundToInt
+
+/**
+ * Master Bottom Control Bar matching the reference UI design.
+ * Structure:
+ * 1. Floating Master Zoom Capsule directly over the viewfinder: [0.5] [(1x)] [2] [3] [5] [10]
+ * 2. Solid Pure Black Bottom Panel:
+ *    - Shutter row: [Gallery]  [Shutter Button]  [Flip Camera]
+ *    - Mode carousel: [PHOTO ●]  [PORTRAIT]  [VIDEO]  [CINEMA]  [MORE]
+ */
+@Composable
+fun BottomControlBar(
+    cameraMode: CameraMode,
+    currentZoom: Float = 1.0f,
+    displayedLenses: List<LensInfo> = emptyList(),
+    selectedLens: LensInfo? = null,
+    onLensSelected: (LensInfo) -> Unit = {},
+    onZoomChange: (Float) -> Unit = {},
+    onZoomPresetTap: (Float) -> Unit = onZoomChange,
+    capabilities: HardwareCapabilities = HardwareCapabilities(),
+    onShowToast: (String) -> Unit = {},
+    isRecordingVideo: Boolean,
+    videoDurationSeconds: Int,
+    isCapturing: Boolean,
+    isManualProOpen: Boolean = false,
+    lastCapturedMedia: CapturedMedia?,
+    activeTimerCountdown: Int?,
+    onModeSelected: (CameraMode) -> Unit,
+    onShutterClick: () -> Unit,
+    onFlipCameraClick: () -> Unit,
+    onToggleProClick: () -> Unit = {},
+    onGalleryClick: () -> Unit,
+    onCinemaModeClick: (() -> Unit)? = null,
+    layoutConfig: ModeLayoutConfig = ModeLayoutConfig(),
+    modifier: Modifier = Modifier
+) {
+    val accentColor = layoutConfig.getComposeAccentColor()
+    val fontFamily = layoutConfig.modeFontFamily.toComposeFontFamily()
+
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .testTag("master_bottom_control_bar"),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        // 1. Floating Master Zoom Capsule (0.5, 1x, 2, 3, 5, 10)
+        if (layoutConfig.showZoomCapsule) {
+            MasterZoomCapsule(
+                currentZoom = currentZoom,
+                displayedLenses = displayedLenses,
+                selectedLens = selectedLens,
+                capabilities = capabilities,
+                onShowToast = onShowToast,
+                onLensSelected = onLensSelected,
+                onZoomChange = onZoomChange,
+                onZoomPresetTap = onZoomPresetTap,
+                modifier = Modifier
+                    .offset(y = layoutConfig.zoomCapsuleVerticalOffsetDp.dp)
+                    .scale(layoutConfig.zoomCapsuleScale)
+                    .padding(bottom = 14.dp)
+                    .testTag("master_zoom_capsule")
+            )
+        }
+
+        // 2. Frosted Glass Bottom Control Area
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(
+                    androidx.compose.ui.graphics.Brush.verticalGradient(
+                        colors = listOf(
+                            Color.Transparent,
+                            Color(0xD90E1017),
+                            Color(0xF5080A0E)
+                        )
+                    )
+                )
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .navigationBarsPadding()
+                    .padding(top = 14.dp, bottom = layoutConfig.bottomPaddingDp.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                // Active Countdown Badge (Timer)
+                AnimatedVisibility(visible = activeTimerCountdown != null) {
+                    activeTimerCountdown?.let { count ->
+                        Box(
+                            modifier = Modifier
+                                .padding(bottom = 12.dp)
+                                .size(50.dp)
+                                .clip(CircleShape)
+                                .background(accentColor),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = count.toString(),
+                                color = Color.Black,
+                                fontSize = 26.sp,
+                                fontWeight = FontWeight.Black
+                            )
+                        }
+                    }
+                }
+
+                // Active Video Recording Timer Badge
+                AnimatedVisibility(visible = isRecordingVideo) {
+                    val minutes = videoDurationSeconds / 60
+                    val seconds = videoDurationSeconds % 60
+                    val timeFormatted = "%02d:%02d".format(minutes, seconds)
+
+                    val infiniteTransition = rememberInfiniteTransition(label = "recDotPulse")
+                    val dotAlpha by infiniteTransition.animateFloat(
+                        initialValue = 0.3f,
+                        targetValue = 1.0f,
+                        animationSpec = infiniteRepeatable(
+                            animation = tween(500, easing = LinearEasing),
+                            repeatMode = RepeatMode.Reverse
+                        ),
+                        label = "dotAlpha"
+                    )
+
+                    Row(
+                        modifier = Modifier
+                            .padding(bottom = 12.dp)
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(Color.Red.copy(alpha = 0.25f))
+                            .border(1.dp, Color.Red, RoundedCornerShape(16.dp))
+                            .padding(horizontal = 14.dp, vertical = 5.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(8.dp)
+                                .clip(CircleShape)
+                                .background(Color.Red.copy(alpha = dotAlpha))
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "REC $timeFormatted",
+                            color = Color.White,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold,
+                            letterSpacing = 1.sp
+                        )
+                    }
+                }
+
+                // Shutter & Action Buttons Row Composable
+                val shutterRowContent = @Composable {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 32.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        // Left: Gallery Thumbnail
+                        if (layoutConfig.showGalleryButton) {
+                            Box(
+                                modifier = Modifier
+                                    .size(layoutConfig.galleryThumbSizeDp.dp)
+                                    .clip(CircleShape)
+                                    .background(Color(0x22FFFFFF))
+                                    .border(1.5.dp, Color.White.copy(alpha = 0.35f), CircleShape)
+                                    .clickable { onGalleryClick() }
+                                    .testTag("gallery_thumbnail_button"),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                if (lastCapturedMedia != null) {
+                                    AsyncImage(
+                                        model = lastCapturedMedia.uri,
+                                        contentDescription = "Last captured media",
+                                        contentScale = ContentScale.Crop,
+                                        modifier = Modifier.fillMaxSize()
+                                    )
+                                } else {
+                                    Icon(
+                                        imageVector = Icons.Outlined.PhotoLibrary,
+                                        contentDescription = "Gallery",
+                                        tint = Color.White,
+                                        modifier = Modifier.size(22.dp)
+                                    )
+                                }
+                            }
+                        } else {
+                            Spacer(modifier = Modifier.size(layoutConfig.galleryThumbSizeDp.dp))
+                        }
+
+                        // Center: Customizable Shutter Button
+                        val shutterSize = layoutConfig.shutterSizeDp.dp
+                        Box(
+                            modifier = Modifier
+                                .offset(x = layoutConfig.shutterHorizontalOffsetDp.dp)
+                                .size(shutterSize)
+                                .clip(CircleShape)
+                                .then(
+                                    when (layoutConfig.shutterStyle) {
+                                        ShutterStyle.CLASSIC_WHITE -> Modifier.border(3.5.dp, Color.White, CircleShape)
+                                        ShutterStyle.APPLE_DOT -> Modifier.border(2.dp, Color.White.copy(alpha = 0.9f), CircleShape)
+                                        ShutterStyle.SAMSUNG_CAPSULE -> Modifier.border(4.dp, Color.White, CircleShape).padding(4.dp)
+                                        ShutterStyle.VIVO_GIMBAL -> Modifier.border(3.dp, accentColor, CircleShape)
+                                        ShutterStyle.MINIMAL_ACCENT -> Modifier
+                                    }
+                                )
+                                .clickable { onShutterClick() }
+                                .testTag("main_shutter_button"),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            val buttonScale by animateFloatAsState(
+                                targetValue = if (isCapturing) 0.85f else 1.0f,
+                                label = "shutterScale"
+                            )
+
+                            when (cameraMode) {
+                                CameraMode.PHOTO, CameraMode.MORE, CameraMode.AI_SUBJECT_TRACKING -> {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(shutterSize * 0.8f)
+                                            .scale(buttonScale)
+                                            .clip(CircleShape)
+                                            .background(if (layoutConfig.shutterStyle == ShutterStyle.MINIMAL_ACCENT) accentColor else Color.White)
+                                    )
+                                }
+                                CameraMode.NIGHT -> {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(shutterSize * 0.8f)
+                                            .scale(buttonScale)
+                                            .clip(CircleShape)
+                                            .background(Color.White)
+                                            .border(3.dp, Color(0xFFFFB300), CircleShape),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(shutterSize * 0.25f)
+                                                .clip(CircleShape)
+                                                .background(Color(0xFFFFB300))
+                                        )
+                                    }
+                                }
+                                CameraMode.PORTRAIT -> {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(shutterSize * 0.8f)
+                                            .scale(buttonScale)
+                                            .clip(CircleShape)
+                                            .background(Color.White)
+                                            .border(2.5.dp, accentColor, CircleShape),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(shutterSize * 0.2f)
+                                                .clip(CircleShape)
+                                                .background(accentColor)
+                                        )
+                                    }
+                                }
+                                CameraMode.VIDEO, CameraMode.CINEMA, CameraMode.DOLLY_ZOOM, CameraMode.DUAL_VIDEO -> {
+                                    if (isRecordingVideo) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(shutterSize * 0.38f)
+                                                .clip(RoundedCornerShape(6.dp))
+                                                .background(Color(0xFFE53935))
+                                        )
+                                    } else {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(shutterSize * 0.8f)
+                                                .clip(CircleShape)
+                                                .background(Color(0xFFE53935))
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
+                        // Right: Camera Switcher / Flip Button
+                        if (layoutConfig.showFlipButton) {
+                            Box(
+                                modifier = Modifier
+                                    .size(layoutConfig.flipButtonSizeDp.dp)
+                                    .clip(CircleShape)
+                                    .background(Color(0xB21E1E24))
+                                    .border(1.dp, Color.White.copy(alpha = 0.22f), CircleShape)
+                                    .clickable(enabled = !isRecordingVideo) { onFlipCameraClick() }
+                                    .testTag("flip_camera_button"),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Outlined.FlipCameraAndroid,
+                                    contentDescription = "Flip Camera",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(24.dp)
+                                )
+                            }
+                        } else {
+                            Spacer(modifier = Modifier.size(layoutConfig.flipButtonSizeDp.dp))
+                        }
+                    }
+                }
+
+                // Mode Carousel Composable
+                val modeCarouselContent = @Composable {
+                    if (!isRecordingVideo) {
+                        val modeScrollState = rememberScrollState()
+                        // User directive: only Photo, Portrait, and Video in the main bar; all other modes in More Modes
+                        val modesToDisplay = remember(layoutConfig.visibleModes) {
+                            val filtered = layoutConfig.visibleModes.filter {
+                                it == CameraMode.PHOTO || it == CameraMode.PORTRAIT || it == CameraMode.VIDEO || it == CameraMode.MORE
+                            }
+                            if (filtered.isEmpty()) {
+                                listOf(CameraMode.PHOTO, CameraMode.PORTRAIT, CameraMode.VIDEO, CameraMode.MORE)
+                            } else {
+                                filtered
+                            }
+                        }
+
+                        val isMoreModeActive = (cameraMode != CameraMode.PHOTO && cameraMode != CameraMode.PORTRAIT && cameraMode != CameraMode.VIDEO)
+
+                        LaunchedEffect(cameraMode) {
+                            val targetMode = if (isMoreModeActive) CameraMode.MORE else cameraMode
+                            val index = modesToDisplay.indexOf(targetMode)
+                            if (index >= 0) {
+                                val itemEstimatedWidthPx = 180
+                                val targetScroll = (index * itemEstimatedWidthPx - 140).coerceAtLeast(0)
+                                modeScrollState.animateScrollTo(targetScroll)
+                            }
+                        }
+
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(modeScrollState)
+                                .padding(horizontal = 16.dp),
+                            horizontalArrangement = Arrangement.spacedBy(22.dp, Alignment.CenterHorizontally),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            modesToDisplay.forEach { mode ->
+                                val isSelected = if (mode == CameraMode.MORE) isMoreModeActive else (cameraMode == mode)
+                                val textColor by animateColorAsState(
+                                    if (isSelected) accentColor else Color.White.copy(alpha = 0.65f),
+                                    label = "modeTextColor"
+                                )
+
+                                val displayText = if (mode == CameraMode.MORE && isMoreModeActive && cameraMode != CameraMode.MORE) {
+                                    cameraMode.name
+                                } else {
+                                    mode.name
+                                }
+
+                                Column(
+                                    modifier = Modifier
+                                        .clickable {
+                                            if (mode == CameraMode.MORE) {
+                                                onModeSelected(CameraMode.MORE)
+                                            } else {
+                                                onModeSelected(mode)
+                                            }
+                                        }
+                                        .padding(vertical = 4.dp, horizontal = 6.dp)
+                                        .testTag("mode_${mode.name.lowercase()}"),
+                                    horizontalAlignment = Alignment.CenterHorizontally
+                                ) {
+                                    when (layoutConfig.modeSelectorStyle) {
+                                        ModeSelectorStyle.CLASSIC_DOT -> {
+                                            Text(
+                                                text = displayText,
+                                                color = textColor,
+                                                fontSize = layoutConfig.modeTextSizeSp.sp,
+                                                fontWeight = if (isSelected) FontWeight.ExtraBold else FontWeight.Bold,
+                                                fontFamily = fontFamily,
+                                                letterSpacing = 1.sp,
+                                                maxLines = 1,
+                                                softWrap = false
+                                            )
+                                            Spacer(modifier = Modifier.height(4.dp))
+                                            if (isSelected) {
+                                                Box(
+                                                    modifier = Modifier
+                                                        .size(5.dp)
+                                                        .clip(CircleShape)
+                                                        .background(accentColor)
+                                                )
+                                            } else {
+                                                Spacer(modifier = Modifier.size(5.dp))
+                                            }
+                                        }
+                                        ModeSelectorStyle.CAPSULE_PILL -> {
+                                            Surface(
+                                                shape = CircleShape,
+                                                color = if (isSelected) accentColor else Color.Transparent
+                                            ) {
+                                                Text(
+                                                    text = displayText,
+                                                    color = if (isSelected) Color.Black else Color.White.copy(alpha = 0.65f),
+                                                    fontSize = layoutConfig.modeTextSizeSp.sp,
+                                                    fontWeight = if (isSelected) FontWeight.ExtraBold else FontWeight.Bold,
+                                                    fontFamily = fontFamily,
+                                                    letterSpacing = 0.5.sp,
+                                                    maxLines = 1,
+                                                    softWrap = false,
+                                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 3.dp)
+                                                )
+                                            }
+                                        }
+                                        ModeSelectorStyle.UNDERLINE -> {
+                                            Text(
+                                                text = displayText,
+                                                color = if (isSelected) Color.White else Color.White.copy(alpha = 0.65f),
+                                                fontSize = layoutConfig.modeTextSizeSp.sp,
+                                                fontWeight = if (isSelected) FontWeight.ExtraBold else FontWeight.Bold,
+                                                fontFamily = fontFamily,
+                                                letterSpacing = 1.sp,
+                                                maxLines = 1,
+                                                softWrap = false
+                                            )
+                                            Spacer(modifier = Modifier.height(3.dp))
+                                            if (isSelected) {
+                                                Box(
+                                                    modifier = Modifier
+                                                        .width(22.dp)
+                                                        .height(2.5.dp)
+                                                        .clip(CircleShape)
+                                                        .background(accentColor)
+                                                )
+                                            } else {
+                                                Spacer(modifier = Modifier.height(2.5.dp))
+                                            }
+                                        }
+                                        ModeSelectorStyle.MINIMAL_TEXT -> {
+                                            Text(
+                                                text = displayText,
+                                                color = textColor,
+                                                fontSize = layoutConfig.modeTextSizeSp.sp,
+                                                fontWeight = if (isSelected) FontWeight.Black else FontWeight.Medium,
+                                                fontFamily = fontFamily,
+                                                letterSpacing = 1.sp,
+                                                maxLines = 1,
+                                                softWrap = false
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Render in accordance with modeSelectorPosition
+                if (layoutConfig.modeSelectorPosition == ModeSelectorPosition.ABOVE_SHUTTER) {
+                    modeCarouselContent()
+                    Spacer(modifier = Modifier.height(14.dp))
+                    shutterRowContent()
+                } else {
+                    shutterRowContent()
+                    Spacer(modifier = Modifier.height(18.dp))
+                    modeCarouselContent()
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Master Zoom Capsule matching the reference screenshot:
+ * Dark frosted pill floating above the bottom controls, featuring:
+ * 0.5   [1x] (with golden yellow circle border)   2   3   5   10
+ * Supports direct tapping and horizontal drag scrubbing for fine zoom control.
+ */
+@Composable
+fun MasterZoomCapsule(
+    currentZoom: Float,
+    displayedLenses: List<LensInfo>,
+    selectedLens: LensInfo?,
+    capabilities: HardwareCapabilities = HardwareCapabilities(),
+    onShowToast: (String) -> Unit = {},
+    onLensSelected: (LensInfo) -> Unit,
+    onZoomChange: (Float) -> Unit,
+    onZoomPresetTap: (Float) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val isFrontCamera = selectedLens?.facing == CameraCharacteristics.LENS_FACING_FRONT
+    val presets = remember(isFrontCamera) {
+        if (isFrontCamera) {
+            listOf(1.0f)
+        } else {
+            listOf(0.5f, 1.0f, 2.0f, 3.0f, 5.0f, 10.0f)
+        }
+    }
+
+    var isDragging by remember { mutableStateOf(false) }
+
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(22.dp))
+            .background(Color(0xD9141418))
+            .border(1.dp, Color.White.copy(alpha = 0.18f), RoundedCornerShape(22.dp))
+            .pointerInput(currentZoom) {
+                detectHorizontalDragGestures(
+                    onDragStart = { isDragging = true },
+                    onDragEnd = { isDragging = false },
+                    onDragCancel = { isDragging = false },
+                    onHorizontalDrag = { change, dragAmount ->
+                        change.consume()
+                        val sensitivity = 0.022f
+                        val newZoom = (currentZoom + dragAmount * sensitivity).coerceIn(0.5f, 10.0f)
+                        val rounded = (newZoom * 10).roundToInt() / 10f
+                        onZoomChange(rounded)
+                    }
+                )
+            }
+            .padding(horizontal = 6.dp, vertical = 4.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            presets.forEach { preset ->
+                val isClosest = presets.minByOrNull { (it - currentZoom).absoluteValue } == preset
+                val isExactMatch = (currentZoom - preset).absoluteValue < 0.2f
+                val isActive = isExactMatch || (isClosest && !isDragging)
+
+                val label = when (preset) {
+                    0.5f -> "0.5"
+                    1.0f -> "1x"
+                    2.0f -> "2"
+                    3.0f -> "3"
+                    5.0f -> "5"
+                    10.0f -> "10"
+                    else -> "${preset}x"
+                }
+
+                val displayText = if (isActive && (currentZoom - preset).absoluteValue >= 0.25f) {
+                    "%.1fx".format(currentZoom)
+                } else {
+                    label
+                }
+
+                // Physical lens mapping
+                val targetLens = when (preset) {
+                    0.5f -> displayedLenses.firstOrNull { it.lensType == LensType.ULTRAWIDE && it.isPhysical }
+                        ?: displayedLenses.firstOrNull { it.lensType == LensType.ULTRAWIDE }
+                    1.0f -> displayedLenses.firstOrNull { it.lensType == LensType.WIDE && it.isPhysical && !it.isZoomPreset }
+                        ?: displayedLenses.firstOrNull { it.lensType == LensType.WIDE && !it.isZoomPreset }
+                    2.0f -> displayedLenses.firstOrNull { (it.lensType == LensType.TELEPHOTO || it.lensType == LensType.TELEPHOTO_3X) && it.isPhysical }
+                        ?: displayedLenses.firstOrNull { it.lensType == LensType.TELEPHOTO || it.lensType == LensType.TELEPHOTO_3X }
+                    3.0f -> displayedLenses.firstOrNull { it.lensType == LensType.TELEPHOTO_3X && it.isPhysical }
+                        ?: displayedLenses.firstOrNull { it.lensType == LensType.TELEPHOTO_3X }
+                        ?: displayedLenses.firstOrNull { it.lensType == LensType.TELEPHOTO && it.isPhysical }
+                    5.0f -> displayedLenses.firstOrNull { it.isPhysical && (it.baseZoomRatio in 4.5f..5.5f || it.equivalent35mmFocalMm in 110f..140f) }
+                    10.0f -> displayedLenses.firstOrNull { it.isPhysical && (it.baseZoomRatio in 9.0f..11.0f || it.equivalent35mmFocalMm >= 220f) }
+                    else -> null
+                }
+
+                Box(
+                    modifier = Modifier
+                        .size(36.dp)
+                        .clip(CircleShape)
+                        .background(if (isActive) Color(0xFF26210A) else Color.Transparent)
+                        .border(
+                            width = if (isActive) 1.5.dp else 0.dp,
+                            color = if (isActive) Color(0xFFFFD54F) else Color.Transparent,
+                            shape = CircleShape
+                        )
+                        .clickable {
+                            if (targetLens != null) {
+                                onLensSelected(targetLens)
+                            } else if (preset == 1.0f) {
+                                val mainLens = displayedLenses.firstOrNull { it.lensType == LensType.WIDE }
+                                if (mainLens != null && selectedLens?.id != mainLens.id) {
+                                    onLensSelected(mainLens)
+                                } else {
+                                    onZoomPresetTap(1.0f)
+                                }
+                            } else if (preset == 0.5f) {
+                                val ultraLens = displayedLenses.firstOrNull { it.lensType == LensType.ULTRAWIDE }
+                                if (ultraLens != null) {
+                                    onLensSelected(ultraLens)
+                                } else if (capabilities.minZoom <= 0.6f) {
+                                    onZoomPresetTap(0.5f)
+                                } else {
+                                    onShowToast("0.5x Ultra-Wide lens is not available on this device")
+                                }
+                            } else {
+                                if (preset <= capabilities.maxZoom) {
+                                    onZoomPresetTap(preset)
+                                } else {
+                                    onShowToast("${preset.toInt()}x zoom is not supported on this device")
+                                }
+                            }
+                        }
+                        .testTag("zoom_preset_${(preset * 10).roundToInt()}"),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = displayText,
+                        color = if (isActive) Color(0xFFFFD54F) else Color.White,
+                        fontSize = if (displayText.length >= 4) 10.5.sp else 12.5.sp,
+                        fontWeight = if (isActive) FontWeight.ExtraBold else FontWeight.Bold,
+                        letterSpacing = (-0.3).sp,
+                        maxLines = 1,
+                        softWrap = false
+                    )
+                }
+            }
+        }
+    }
+}
+
