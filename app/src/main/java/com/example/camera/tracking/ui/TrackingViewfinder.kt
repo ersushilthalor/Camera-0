@@ -13,7 +13,11 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -64,15 +68,32 @@ fun TrackingViewfinder(
         }
     }
 
+    var lastDstRectF by remember { mutableStateOf<android.graphics.RectF?>(null) }
+    var lastSrcCropRect by remember { mutableStateOf<Rect?>(null) }
+    var lastFrameW by remember { mutableIntStateOf(0) }
+    var lastFrameH by remember { mutableIntStateOf(0) }
+
     BoxWithConstraints(
         modifier = modifier
             .background(Color.Black)
             .testTag("tracking_viewfinder")
-            .pointerInput(cropWindow) {
+            .pointerInput(cropWindow, aspectRatio) {
                 detectTapGestures { tapOffset ->
-                    val vfX = (tapOffset.x / size.width).coerceIn(0f, 1f)
-                    val vfY = (tapOffset.y / size.height).coerceIn(0f, 1f)
-                    onTapToTrack(vfX, vfY)
+                    val dst = lastDstRectF
+                    val src = lastSrcCropRect
+                    val fw = lastFrameW
+                    val fh = lastFrameH
+                    if (dst != null && src != null && fw > 0 && fh > 0 && dst.width() > 0f && dst.height() > 0f) {
+                        val normInDstX = ((tapOffset.x - dst.left) / dst.width()).coerceIn(0f, 1f)
+                        val normInDstY = ((tapOffset.y - dst.top) / dst.height()).coerceIn(0f, 1f)
+                        val srcX = ((src.left + normInDstX * src.width()) / fw.toFloat()).coerceIn(0f, 1f)
+                        val srcY = ((src.top + normInDstY * src.height()) / fh.toFloat()).coerceIn(0f, 1f)
+                        onTapToTrack(srcX, srcY)
+                    } else {
+                        val vfX = (tapOffset.x / size.width).coerceIn(0f, 1f)
+                        val vfY = (tapOffset.y / size.height).coerceIn(0f, 1f)
+                        onTapToTrack(vfX, vfY)
+                    }
                 }
             }
     ) {
@@ -100,6 +121,11 @@ fun TrackingViewfinder(
                     cropAspect = cropAspect
                 )
 
+                lastDstRectF = dstRectF
+                lastSrcCropRect = srcCropRect
+                lastFrameW = currentFrame.width
+                lastFrameH = currentFrame.height
+
                 val dstRect = Rect(
                     dstRectF.left.roundToInt(),
                     dstRectF.top.roundToInt(),
@@ -116,6 +142,14 @@ fun TrackingViewfinder(
                         nativePaint
                     )
                 }
+
+                // Normalized crop bounds inside the source frame for accurate overlay placement
+                val srcCropNormRect = android.graphics.RectF(
+                    srcCropRect.left.toFloat() / currentFrame.width,
+                    srcCropRect.top.toFloat() / currentFrame.height,
+                    srcCropRect.right.toFloat() / currentFrame.width,
+                    srcCropRect.bottom.toFloat() / currentFrame.height
+                )
 
                 // Aspect ratio framing mask (darken letterbox / pillarbox outside dstRect)
                 if (dstRectF.top > 0f) {
@@ -144,7 +178,7 @@ fun TrackingViewfinder(
                     if (candidate.trackingId != activeSubject?.trackingId) {
                         drawCandidateBox(
                             candidate = candidate,
-                            cropWindow = cropWindow,
+                            srcCropNormRect = srcCropNormRect,
                             dstRectF = dstRectF
                         )
                     }
@@ -155,7 +189,7 @@ fun TrackingViewfinder(
                     drawActiveTrackingReticle(
                         subject = activeSubject,
                         status = trackingStatus,
-                        cropWindow = cropWindow,
+                        srcCropNormRect = srcCropNormRect,
                         dstRectF = dstRectF
                     )
                 }
@@ -195,14 +229,14 @@ fun TrackingViewfinder(
 
 private fun DrawScope.drawCandidateBox(
     candidate: TrackedSubject,
-    cropWindow: CropWindow,
+    srcCropNormRect: android.graphics.RectF,
     dstRectF: android.graphics.RectF
 ) {
-    // Map from source [0..1] to crop window space
-    val normLeft = (candidate.bounds.left - cropWindow.left) / cropWindow.width
-    val normTop = (candidate.bounds.top - cropWindow.top) / cropWindow.height
-    val normRight = (candidate.bounds.right - cropWindow.left) / cropWindow.width
-    val normBottom = (candidate.bounds.bottom - cropWindow.top) / cropWindow.height
+    // Map from source [0..1] to visible crop rectangle in dstRectF
+    val normLeft = (candidate.bounds.left - srcCropNormRect.left) / srcCropNormRect.width()
+    val normTop = (candidate.bounds.top - srcCropNormRect.top) / srcCropNormRect.height()
+    val normRight = (candidate.bounds.right - srcCropNormRect.left) / srcCropNormRect.width()
+    val normBottom = (candidate.bounds.bottom - srcCropNormRect.top) / srcCropNormRect.height()
 
     // Only draw if within visible crop region
     if (normRight < 0f || normLeft > 1f || normBottom < 0f || normTop > 1f) return
@@ -226,14 +260,14 @@ private fun DrawScope.drawCandidateBox(
 private fun DrawScope.drawActiveTrackingReticle(
     subject: TrackedSubject,
     status: TrackingStatus,
-    cropWindow: CropWindow,
+    srcCropNormRect: android.graphics.RectF,
     dstRectF: android.graphics.RectF
 ) {
-    // Map from source coordinates to current crop window
-    val normLeft = (subject.bounds.left - cropWindow.left) / cropWindow.width
-    val normTop = (subject.bounds.top - cropWindow.top) / cropWindow.height
-    val normRight = (subject.bounds.right - cropWindow.left) / cropWindow.width
-    val normBottom = (subject.bounds.bottom - cropWindow.top) / cropWindow.height
+    // Map from source coordinates to current crop window in dstRectF
+    val normLeft = (subject.bounds.left - srcCropNormRect.left) / srcCropNormRect.width()
+    val normTop = (subject.bounds.top - srcCropNormRect.top) / srcCropNormRect.height()
+    val normRight = (subject.bounds.right - srcCropNormRect.left) / srcCropNormRect.width()
+    val normBottom = (subject.bounds.bottom - srcCropNormRect.top) / srcCropNormRect.height()
 
     val x = dstRectF.left + normLeft * dstRectF.width()
     val y = dstRectF.top + normTop * dstRectF.height()

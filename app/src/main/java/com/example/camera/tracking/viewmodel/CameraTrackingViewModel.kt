@@ -213,14 +213,12 @@ class CameraTrackingViewModel(application: Application) : AndroidViewModel(appli
 
     /**
      * User taps the viewfinder to track an object or person.
-     * Maps tap from viewfinder coordinates to source frame coordinates.
+     * [normX, normY] are in normalized source frame coordinates [0..1].
      */
-    fun onTapToTrack(vfX: Float, vfY: Float) {
-        val currentCrop = _uiState.value.cropWindow
-        val srcPoint = cropController.mapViewfinderToSource(vfX, vfY, currentCrop)
+    fun onTapToTrack(normX: Float, normY: Float) {
         subjectTracker.selectSubjectAt(
-            srcX = srcPoint.x,
-            srcY = srcPoint.y,
+            srcX = normX,
+            srcY = normY,
             allCurrentDetections = _uiState.value.allDetections,
             sourceBitmap = latestSourceBitmap
         )
@@ -285,6 +283,9 @@ class CameraTrackingViewModel(application: Application) : AndroidViewModel(appli
 
             delay(120)
             _uiState.update { it.copy(flashFeedback = false) }
+
+            // Tracking stops only when the final output frame is completed/saved
+            unlockTracking()
         }
     }
 
@@ -348,6 +349,9 @@ class CameraTrackingViewModel(application: Application) : AndroidViewModel(appli
                         reviewingMediaItem = mediaItem
                     )
                 }
+
+                // Tracking stops only when the final output frame is completed/saved
+                unlockTracking()
             }
         }
     }

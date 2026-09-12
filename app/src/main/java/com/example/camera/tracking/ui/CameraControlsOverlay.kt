@@ -577,11 +577,11 @@ private fun CenterTrackingHud(
                     val statusText = when (uiState.trackingStatus) {
                         TrackingStatus.TRACKING_LOCKED -> {
                             val zoomStr = String.format("%.1f", uiState.currentZoom)
-                            "AI LOCKED ${zoomStr}× • ${uiState.activeSubject?.label ?: "Subject"} #${uiState.activeSubject?.trackingId ?: ""}"
+                            "AI LOCKED ${zoomStr}× • ${uiState.activeSubject?.label ?: "Subject"}"
                         }
-                        TrackingStatus.OCCLUDED_PREDICTING -> "OCCLUDED • PREDICTING TRAJECTORY"
-                        TrackingStatus.LOST -> "SEARCHING • AUTO REACQUIRING..."
-                        else -> "DETECTING SUBJECTS • TAP TO LOCK"
+                        TrackingStatus.OCCLUDED_PREDICTING -> "OCCLUDED • HOLDING LOCK"
+                        TrackingStatus.LOST -> "SEARCHING • TAP TO LOCK"
+                        else -> "TAP A SUBJECT TO LOCK TRACKING"
                     }
                     Text(
                         text = statusText,

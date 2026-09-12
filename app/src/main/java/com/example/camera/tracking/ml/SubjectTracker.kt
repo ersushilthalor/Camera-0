@@ -78,8 +78,11 @@ class SubjectTracker(
     fun getTrackingStatus(): TrackingStatus = status
 
     /**
-     * User taps the viewfinder to lock onto a subject, or auto-locked on detection.
+     * User taps the viewfinder to lock onto a subject.
      * [srcX, srcY] are in normalized source coordinates [0..1].
+     *
+     * Rule: Only track a human subject or the exact subject manually tapped by the user.
+     * When user taps, lock that subject permanently.
      */
     @Synchronized
     fun selectSubjectAt(
@@ -91,40 +94,70 @@ class SubjectTracker(
         val safeX = if (srcX.isFinite()) srcX.coerceIn(0f, 1f) else 0.5f
         val safeY = if (srcY.isFinite()) srcY.coerceIn(0f, 1f) else 0.5f
 
-        // STRICT ENFORCEMENT: Only allow selecting humans or moving subjects; NEVER static objects
-        val eligible = allCurrentDetections.filter { it.isHuman || it.isMoving }
-
-        val hit = eligible.firstOrNull { it.bounds.contains(safeX, safeY) }
-            ?: eligible.minByOrNull {
+        // 1. Prioritize a detected human subject at or near tap
+        val humanHit = allCurrentDetections.filter { it.isHuman }.firstOrNull { it.bounds.contains(safeX, safeY) }
+            ?: allCurrentDetections.filter { it.isHuman }.minByOrNull {
                 hypot((it.bounds.centerX - safeX).toDouble(), (it.bounds.centerY - safeY).toDouble())
             }?.takeIf {
-                val dist = hypot((it.bounds.centerX - safeX).toDouble(), (it.bounds.centerY - safeY).toDouble())
-                dist < 0.28
+                hypot((it.bounds.centerX - safeX).toDouble(), (it.bounds.centerY - safeY).toDouble()) < 0.22
             }
 
-        if (hit != null) {
-            val signature = extractColorSignature(sourceBitmap, hit.bounds)
-            Log.d(TAG, "Lock acquired on manual tap: ID=${hit.trackingId}, label=${hit.label}")
-            activeTrackingId = hit.trackingId
-            activeSubject = hit.copy(
+        // 2. Or any detected candidate subject at or near tap
+        val objectHit = if (humanHit == null) {
+            allCurrentDetections.firstOrNull { it.bounds.contains(safeX, safeY) }
+                ?: allCurrentDetections.minByOrNull {
+                    hypot((it.bounds.centerX - safeX).toDouble(), (it.bounds.centerY - safeY).toDouble())
+                }?.takeIf {
+                    hypot((it.bounds.centerX - safeX).toDouble(), (it.bounds.centerY - safeY).toDouble()) < 0.18
+                }
+        } else null
+
+        // 3. If ML Kit did not detect an object at tap location, lock onto the exact subject manually tapped
+        val chosen: TrackedSubject = humanHit ?: objectHit ?: run {
+            val halfW = 0.10f
+            val halfH = 0.14f
+            val customBounds = NormalizedRect(
+                left = (safeX - halfW).coerceIn(0f, 1f),
+                top = (safeY - halfH).coerceIn(0f, 1f),
+                right = (safeX + halfW).coerceIn(0f, 1f),
+                bottom = (safeY + halfH).coerceIn(0f, 1f)
+            )
+            val newId = (System.currentTimeMillis() and 0x7FFFFFFF).toInt()
+            val sig = extractColorSignature(sourceBitmap, customBounds)
+            TrackedSubject(
+                trackingId = newId,
+                bounds = customBounds,
+                label = "Locked Subject",
+                confidence = 1.0f,
                 velocityX = 0f,
                 velocityY = 0f,
                 accelX = 0f,
                 accelY = 0f,
-                colorHistogram = signature,
+                colorHistogram = sig,
                 lockQuality = 1.0f,
-                lastSeenTimestamp = System.currentTimeMillis()
+                lastSeenTimestamp = System.currentTimeMillis(),
+                isConfirmedByAi = false,
+                isHuman = false
             )
-            status = TrackingStatus.TRACKING_LOCKED
-            missedFrames = 0
-            provisionalTapCenter = null
-
-            adaptiveLearner?.startSelectionSession(hit, signature, hit.isHuman)
-        } else {
-            // Manual tap on empty area or static object: Do NOT track random/static objects.
-            Log.d(TAG, "Tap at ($safeX, $safeY) did not hit a human or moving subject, ignoring.")
-            return
         }
+
+        val signature = chosen.colorHistogram ?: extractColorSignature(sourceBitmap, chosen.bounds)
+        Log.d(TAG, "Lock acquired permanently on manual tap: ID=${chosen.trackingId}, label=${chosen.label}, isHuman=${chosen.isHuman}")
+        activeTrackingId = chosen.trackingId
+        activeSubject = chosen.copy(
+            velocityX = 0f,
+            velocityY = 0f,
+            accelX = 0f,
+            accelY = 0f,
+            colorHistogram = signature,
+            lockQuality = 1.0f,
+            lastSeenTimestamp = System.currentTimeMillis()
+        )
+        status = TrackingStatus.TRACKING_LOCKED
+        missedFrames = 0
+        provisionalTapCenter = PointF(safeX, safeY)
+
+        adaptiveLearner?.startSelectionSession(chosen, signature, chosen.isHuman)
         onStateUpdated(status, activeSubject, allCurrentDetections)
     }
 
@@ -299,7 +332,8 @@ class SubjectTracker(
                         rawLabel.contains("monitor", ignoreCase = true) ||
                         rawLabel.contains("plant", ignoreCase = true)
 
-                if (isFurniture) {
+                val isCurrentlyLocked = (id == activeTrackingId)
+                if (!isCurrentlyLocked && isFurniture) {
                     return@mapNotNull null
                 }
 
@@ -335,8 +369,9 @@ class SubjectTracker(
                 val speed = if (dt > 0.001f) dist / dt else 0f
                 val isMoving = speed > 0.035f || motion.totalDisplacement >= 0.022f
 
-                // STRICT FILTER: NEVER track static non-human objects
-                if (!isHuman && !isMoving && motion.observationCount >= 2) {
+                // STRICT FILTER: AI tracking detects only humans and moving subjects,
+                // while preserving the user's manually locked subject.
+                if (!isCurrentlyLocked && !isHuman && !isMoving && motion.observationCount >= 2) {
                     return@mapNotNull null
                 }
 
@@ -344,7 +379,15 @@ class SubjectTracker(
                 val signature = extractColorSignature(sourceBitmap, normRect)
                 val affinity = adaptiveLearner?.computeLearnedAffinity(normRect, signature, isHuman) ?: 0f
 
-                val displayLabel = if (isHuman) "Human" else if (isMoving) "Moving Subject" else rawLabel
+                val displayLabel = if (isCurrentlyLocked && activeSubject != null) {
+                    activeSubject!!.label
+                } else if (isHuman) {
+                    "Human"
+                } else if (isMoving) {
+                    "Moving Subject"
+                } else {
+                    rawLabel
+                }
 
                 TrackedSubject(
                     trackingId = id,
@@ -525,42 +568,26 @@ class SubjectTracker(
                 lastSeenTimestamp = System.currentTimeMillis()
             )
 
-            // Strict enforcement: Never track static non-human objects!
-            if (!matched.isHuman && !matched.isMoving) {
-                val motionRecord = candidateMotionMap[matched.trackingId]
-                if (motionRecord != null && motionRecord.observationCount >= 8 && motionRecord.totalDisplacement < 0.018f) {
-                    Log.d(TAG, "Rejecting/dropping lock on confirmed static non-human object ID=${matched.trackingId}")
-                    unlock()
-                    return
-                }
-            }
-
             activeSubject = updated
             status = TrackingStatus.TRACKING_LOCKED
             adaptiveLearner?.updateTrackingTelemetry(updated.bounds)
         } else {
-            // Drop unconfirmed provisional lock if user tapped a static background or wall
-            if (currentActive != null && !currentActive.isConfirmedByAi && missedFrames > 35) {
-                Log.d(TAG, "Dropping unconfirmed provisional lock on static background/wall after 35 frames")
-                unlock()
-                return
-            }
-
+            // Temporary occlusion handling:
+            // "When the user taps a subject, lock that subject permanently and keep tracking it even if it becomes temporarily occluded. Never automatically switch to another subject/object."
+            // "Tracking should stop only when the final output frame is completed/saved or the user manually exits tracking mode."
             missedFrames++
-            if (missedFrames <= MAX_MISSED_FRAMES && currentActive != null) {
-                // High-speed occlusion trajectory preservation (2nd-order with decay)
-                val decayFactor = 0.95f
-                val predVx = currentActive.velocityX * decayFactor
-                val predVy = currentActive.velocityY * decayFactor
-                val predAx = currentActive.accelX * 0.80f
-                val predAy = currentActive.accelY * 0.80f
+            if (currentActive != null) {
+                val decayFactor = if (missedFrames < 20) 0.92f else 0.40f
+                val predVx = if (missedFrames < 40) currentActive.velocityX * decayFactor else 0f
+                val predVy = if (missedFrames < 40) currentActive.velocityY * decayFactor else 0f
+                val predAx = 0f
+                val predAy = 0f
 
                 val hw = currentActive.bounds.width / 2f
                 val hh = currentActive.bounds.height / 2f
 
-                val dtSqHalf = 0.5f * safeDt * safeDt
-                val newCx = (currentActive.bounds.centerX + predVx * safeDt + predAx * dtSqHalf).coerceIn(hw, 1f - hw)
-                val newCy = (currentActive.bounds.centerY + predVy * safeDt + predAy * dtSqHalf).coerceIn(hh, 1f - hh)
+                val newCx = (currentActive.bounds.centerX + predVx * safeDt).coerceIn(hw, 1f - hw)
+                val newCy = (currentActive.bounds.centerY + predVy * safeDt).coerceIn(hh, 1f - hh)
 
                 val predictedBounds = NormalizedRect(
                     left = (newCx - hw).coerceIn(0f, 1f),
@@ -569,21 +596,15 @@ class SubjectTracker(
                     bottom = (newCy + hh).coerceIn(0f, 1f)
                 )
 
-                val quality = (1.0f - (missedFrames.toFloat() / MAX_MISSED_FRAMES.toFloat())).coerceIn(0.1f, 1.0f)
                 activeSubject = currentActive.copy(
                     bounds = predictedBounds,
                     velocityX = predVx,
                     velocityY = predVy,
                     accelX = predAx,
                     accelY = predAy,
-                    lockQuality = quality
+                    lockQuality = 0.90f
                 )
                 status = TrackingStatus.OCCLUDED_PREDICTING
-            } else {
-                status = TrackingStatus.LOST
-                activeSubject = null
-                activeTrackingId = null
-                provisionalTapCenter = null
             }
         }
 
