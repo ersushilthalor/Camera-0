@@ -33,6 +33,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import com.example.camera.model.*
+import com.example.camera.ui.components.FrostedGlassBox
 
 /**
  * Dedicated Cinema Mode Settings Window.
@@ -60,19 +61,19 @@ fun CinemaSettingsWindow(
     var isColorSpaceMenuOpen by remember { mutableStateOf(false) }
     var showInfoDialog by remember { mutableStateOf(false) }
 
-    Box(
+    FrostedGlassBox(
         modifier = modifier
             .fillMaxWidth()
             .padding(horizontal = 14.dp, vertical = 4.dp)
-            .clip(RoundedCornerShape(24.dp))
-            .background(Color(0xF216161C))
-            .border(1.dp, Color.White.copy(alpha = 0.15f), RoundedCornerShape(24.dp))
-            .padding(horizontal = 16.dp, vertical = 12.dp)
-            .testTag("cinema_settings_window")
+            .testTag("cinema_settings_window"),
+        shape = RoundedCornerShape(24.dp),
+        elevation = 20.dp,
+        baseAlpha = 0.74f
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 12.dp)
                 .heightIn(max = 480.dp)
                 .verticalScroll(rememberScrollState()),
             horizontalAlignment = Alignment.CenterHorizontally
@@ -1255,15 +1256,18 @@ fun CinemaSettingsWindow(
     // Modal Info Dialog
     if (showInfoDialog) {
         Dialog(onDismissRequest = { showInfoDialog = false }) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth(0.92f)
-                    .clip(RoundedCornerShape(20.dp))
-                    .background(Color(0xFF1E1E26))
-                    .border(1.dp, Color.White.copy(alpha = 0.15f), RoundedCornerShape(20.dp))
-                    .padding(20.dp)
+            FrostedGlassBox(
+                modifier = Modifier.fillMaxWidth(0.92f),
+                shape = RoundedCornerShape(22.dp),
+                elevation = 24.dp,
+                baseAlpha = 0.85f
             ) {
-                Column(horizontalAlignment = Alignment.Start) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(20.dp),
+                    horizontalAlignment = Alignment.Start
+                ) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,

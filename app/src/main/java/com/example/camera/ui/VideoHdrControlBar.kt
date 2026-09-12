@@ -34,6 +34,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.camera.model.VideoHdrMode
 import com.example.camera.model.VideoHdrState
+import com.example.camera.ui.components.FrostedGlassBox
 
 @Composable
 fun VideoHdrControlBar(
@@ -50,33 +51,18 @@ fun VideoHdrControlBar(
     onClose: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    Box(
+    FrostedGlassBox(
         modifier = modifier
             .fillMaxWidth()
             .padding(horizontal = 12.dp, vertical = 6.dp)
-            .clip(RoundedCornerShape(24.dp))
-            .background(
-                Brush.verticalGradient(
-                    colors = listOf(
-                        Color(0xFF161A29).copy(alpha = 0.65f),
-                        Color(0xFF0C0E18).copy(alpha = 0.75f)
-                    )
-                )
-            )
-            .border(
-                width = 1.dp,
-                brush = Brush.verticalGradient(
-                    colors = listOf(
-                        Color.White.copy(alpha = 0.38f),
-                        Color.White.copy(alpha = 0.10f)
-                    )
-                ),
-                shape = RoundedCornerShape(24.dp)
-            )
-            .padding(horizontal = 16.dp, vertical = 14.dp)
-            .testTag("video_hdr_control_bar")
+            .testTag("video_hdr_control_bar"),
+        shape = RoundedCornerShape(24.dp),
+        elevation = 20.dp,
+        baseAlpha = 0.74f
     ) {
-        Column {
+        Column(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)
+        ) {
         // 1. Header: Title, Live Status Badge, and Close Button
         Row(
             modifier = Modifier

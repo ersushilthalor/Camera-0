@@ -26,6 +26,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.camera.ui.components.FrostedGlassBox
 
 @Composable
 fun MoreModesDrawer(
@@ -47,20 +48,20 @@ fun MoreModesDrawer(
         exit = fadeOut() + slideOutVertically(targetOffsetY = { it / 2 }),
         modifier = modifier
     ) {
-        Box(
+        FrostedGlassBox(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 14.dp, vertical = 8.dp)
-                .clip(RoundedCornerShape(24.dp))
-                .background(Color(0xF214141A))
-                .border(1.dp, Color.White.copy(alpha = 0.15f), RoundedCornerShape(24.dp))
-                .padding(18.dp)
-                .testTag("more_modes_drawer")
+                .testTag("more_modes_drawer"),
+            shape = RoundedCornerShape(24.dp),
+            elevation = 20.dp,
+            baseAlpha = 0.72f
         ) {
-            Column(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
+            Box(modifier = Modifier.padding(18.dp)) {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
                 // Header
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -230,6 +231,7 @@ fun MoreModesDrawer(
         }
     }
 }
+}
 
 @Composable
 private fun MoreModeCard(
@@ -242,9 +244,25 @@ private fun MoreModeCard(
 ) {
     Column(
         modifier = modifier
-            .clip(RoundedCornerShape(14.dp))
-            .background(Color(0xFF1E1E26))
-            .border(1.dp, Color.White.copy(alpha = 0.12f), RoundedCornerShape(14.dp))
+            .clip(RoundedCornerShape(16.dp))
+            .background(
+                androidx.compose.ui.graphics.Brush.verticalGradient(
+                    listOf(
+                        Color.White.copy(alpha = 0.08f),
+                        Color.White.copy(alpha = 0.03f)
+                    )
+                )
+            )
+            .border(
+                1.dp,
+                androidx.compose.ui.graphics.Brush.verticalGradient(
+                    listOf(
+                        Color.White.copy(alpha = 0.24f),
+                        Color.White.copy(alpha = 0.06f)
+                    )
+                ),
+                RoundedCornerShape(16.dp)
+            )
             .clickable { onClick() }
             .padding(12.dp)
             .testTag(tag),
@@ -254,7 +272,8 @@ private fun MoreModeCard(
             modifier = Modifier
                 .size(34.dp)
                 .clip(CircleShape)
-                .background(Color(0xFF2B2B36)),
+                .background(Color.White.copy(alpha = 0.10f))
+                .border(1.dp, Color.White.copy(alpha = 0.15f), CircleShape),
             contentAlignment = Alignment.Center
         ) {
             Icon(

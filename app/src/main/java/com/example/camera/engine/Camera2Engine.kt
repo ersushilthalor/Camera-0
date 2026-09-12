@@ -2630,14 +2630,18 @@ class Camera2Engine(private val context: Context) {
                 }
             }
             val targetFps = if (isCinema) cinemaConfig.value.videoFps else videoFps
+            val cinemaCodec = if (isCinema) cinemaConfig.value.codec else CinemaCodec.H264
+            val isSoftwareCinema = isCinema && (cinemaCodec == CinemaCodec.PRORES || cinemaCodec == CinemaCodec.VP9)
 
             val timeStamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
             val prefix = if (isCinema) "CINEMA_" else "VID_"
-            val fileName = "${prefix}$timeStamp.mp4"
+            val extension = if (isSoftwareCinema && cinemaCodec == CinemaCodec.VP9) "webm" else "mp4"
+            val mimeType = if (extension == "webm") "video/webm" else "video/mp4"
+            val fileName = "${prefix}$timeStamp.$extension"
 
             val contentValues = ContentValues().apply {
                 put(MediaStore.Video.Media.DISPLAY_NAME, fileName)
-                put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
+                put(MediaStore.Video.Media.MIME_TYPE, mimeType)
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                     put(MediaStore.Video.Media.RELATIVE_PATH, "DCIM/Camera")
                     put(MediaStore.Video.Media.IS_PENDING, 1)
@@ -2652,10 +2656,8 @@ class Camera2Engine(private val context: Context) {
             currentVideoUri = uri
 
             // Software Codec Check for Cinema Mode (VP9 & Apple ProRes 422 10-bit)
-            val cinemaCodec = if (isCinema) cinemaConfig.value.codec else CinemaCodec.H264
-            if (isCinema && (cinemaCodec == CinemaCodec.PRORES || cinemaCodec == CinemaCodec.VP9)) {
+            if (isSoftwareCinema) {
                 isSoftwareCinemaRecording = true
-                val extension = if (cinemaCodec == CinemaCodec.PRORES) "mov" else "mp4"
                 val tempSoftwareFile = File(context.cacheDir, "cinema_temp_${System.currentTimeMillis()}.$extension")
                 currentRecordingTempFile = tempSoftwareFile
 
@@ -2855,9 +2857,19 @@ class Camera2Engine(private val context: Context) {
                             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                                 val values = ContentValues().apply {
                                     put(MediaStore.Video.Media.IS_PENDING, 0)
+                                    put(MediaStore.Video.Media.SIZE, recordedFile.length())
                                 }
                                 context.contentResolver.update(targetUri, values, null, null)
                             }
+                            try {
+                                val mimeType = if (recordedFile.name.endsWith(".webm")) "video/webm" else "video/mp4"
+                                android.media.MediaScannerConnection.scanFile(
+                                    context,
+                                    arrayOf(recordedFile.absolutePath),
+                                    arrayOf(mimeType),
+                                    null
+                                )
+                            } catch (ignored: Exception) {}
                             _lastCapturedMedia.value = CapturedMedia(
                                 uri = targetUri,
                                 isVideo = true,

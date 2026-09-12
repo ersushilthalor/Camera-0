@@ -27,6 +27,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.camera.model.CameraResolution
+import com.example.camera.ui.components.FrostedGlassBox
 
 /**
  * Floating Liquid Frosted Glass Resolution & Frame Panel
@@ -50,22 +51,19 @@ fun FloatingVideoSettingsPanel(
         exit = fadeOut() + slideOutVertically(targetOffsetY = { -it / 2 }),
         modifier = modifier
     ) {
-        Box(
+        FrostedGlassBox(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 16.dp, vertical = 6.dp)
-                .clip(RoundedCornerShape(22.dp))
-                .background(Color(0xF0141418))
-                .border(
-                    BorderStroke(1.dp, Color.White.copy(alpha = 0.20f)),
-                    shape = RoundedCornerShape(22.dp)
-                )
-                .padding(horizontal = 18.dp, vertical = 14.dp)
-                .testTag("floating_video_settings_panel")
+                .testTag("floating_video_settings_panel"),
+            shape = RoundedCornerShape(22.dp),
+            elevation = 20.dp,
+            baseAlpha = 0.74f
         ) {
-            Column(
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
+            Box(modifier = Modifier.padding(horizontal = 18.dp, vertical = 14.dp)) {
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
                 // Header with title and close button
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -257,5 +255,6 @@ fun FloatingVideoSettingsPanel(
             }
         }
     }
+}
 }
 

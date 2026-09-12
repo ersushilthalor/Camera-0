@@ -27,6 +27,7 @@ import androidx.compose.ui.unit.sp
 import com.example.camera.model.BokehStyle
 import com.example.camera.model.PortraitConfig
 import com.example.camera.model.PortraitProcessingState
+import com.example.camera.ui.components.FrostedGlassBox
 
 @Composable
 fun PortraitControlBar(
@@ -42,33 +43,18 @@ fun PortraitControlBar(
 ) {
     val apertures = listOf("f/0.95", "f/1.2", "f/1.4", "f/1.8", "f/2.4", "f/2.8")
 
-    Box(
+    FrostedGlassBox(
         modifier = modifier
             .fillMaxWidth()
             .padding(horizontal = 12.dp, vertical = 6.dp)
-            .clip(RoundedCornerShape(24.dp))
-            .background(
-                Brush.verticalGradient(
-                    colors = listOf(
-                        Color(0xFF161A29).copy(alpha = 0.65f),
-                        Color(0xFF0C0E18).copy(alpha = 0.75f)
-                    )
-                )
-            )
-            .border(
-                width = 1.dp,
-                brush = Brush.verticalGradient(
-                    colors = listOf(
-                        Color.White.copy(alpha = 0.38f),
-                        Color.White.copy(alpha = 0.10f)
-                    )
-                ),
-                shape = RoundedCornerShape(24.dp)
-            )
-            .padding(horizontal = 16.dp, vertical = 14.dp)
-            .testTag("portrait_control_bar")
+            .testTag("portrait_control_bar"),
+        shape = RoundedCornerShape(24.dp),
+        elevation = 20.dp,
+        baseAlpha = 0.74f
     ) {
-        Column {
+        Column(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)
+        ) {
             // Header: Aperture (f-stop) and Close (X) button
             Row(
                 modifier = Modifier

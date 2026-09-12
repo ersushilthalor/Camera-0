@@ -27,6 +27,10 @@ import androidx.compose.ui.window.DialogProperties
 import coil.compose.AsyncImage
 import com.example.camera.model.CapturedMedia
 
+import androidx.compose.foundation.border
+import androidx.compose.ui.text.style.TextOverflow
+import com.example.camera.ui.components.FrostedGlassBox
+
 @Composable
 fun MediaViewerDialog(
     media: CapturedMedia?,
@@ -93,7 +97,7 @@ fun MediaViewerDialog(
                 )
             }
 
-            // Top bar
+            // Top frosted bar
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -107,7 +111,8 @@ fun MediaViewerDialog(
                     modifier = Modifier
                         .size(42.dp)
                         .clip(CircleShape)
-                        .background(Color.Black.copy(alpha = 0.5f))
+                        .background(Color.Black.copy(alpha = 0.55f))
+                        .border(1.dp, Color.White.copy(alpha = 0.25f), CircleShape)
                 ) {
                     Icon(
                         imageVector = Icons.Default.Close,
@@ -116,12 +121,22 @@ fun MediaViewerDialog(
                     )
                 }
 
-                Text(
-                    text = media.displayName,
-                    color = Color.White,
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.Medium
-                )
+                FrostedGlassBox(
+                    shape = RoundedCornerShape(16.dp),
+                    elevation = 12.dp,
+                    baseAlpha = 0.70f,
+                    modifier = Modifier.padding(horizontal = 8.dp)
+                ) {
+                    Text(
+                        text = media.displayName,
+                        color = Color.White,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)
+                    )
+                }
 
                 IconButton(
                     onClick = {
@@ -135,7 +150,8 @@ fun MediaViewerDialog(
                     modifier = Modifier
                         .size(42.dp)
                         .clip(CircleShape)
-                        .background(Color.Black.copy(alpha = 0.5f))
+                        .background(Color.Black.copy(alpha = 0.55f))
+                        .border(1.dp, Color.White.copy(alpha = 0.25f), CircleShape)
                 ) {
                     Icon(
                         imageVector = Icons.Default.Share,

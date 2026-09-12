@@ -24,6 +24,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
@@ -35,6 +36,7 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.camera.model.*
+import com.example.camera.ui.components.FrostedGlassBox
 import com.example.camera.viewmodel.CameraViewModel
 
 @Composable
@@ -199,6 +201,17 @@ fun CameraScreen(
         }
     }
 
+    val isAnyWindowOpen = isPhotoFilterBarOpen || isPortraitStyleBarOpen ||
+            isCinemaSettingsOpen || isManualProOpen || isMoreModesOpen ||
+            (cameraMode == CameraMode.PORTRAIT && isPortraitSettingsOpen) ||
+            isVideoSettingsPanelOpen
+
+    val viewfinderBlurRadius by androidx.compose.animation.core.animateDpAsState(
+        targetValue = if (isAnyWindowOpen || isSettingsOpen) 22.dp else 0.dp,
+        animationSpec = androidx.compose.animation.core.tween(durationMillis = 260),
+        label = "viewfinderGlassBlur"
+    )
+
     Box(
         modifier = modifier
             .fillMaxSize()
@@ -232,7 +245,9 @@ fun CameraScreen(
                 viewModel.toggleAeAfLock()
             },
             currentExposureCompensation = exposureCompensation,
-            modifier = Modifier.fillMaxSize()
+            modifier = Modifier
+                .fillMaxSize()
+                .then(if (viewfinderBlurRadius > 0.dp) Modifier.blur(viewfinderBlurRadius) else Modifier)
         )
 
         // 1b. Cinema Viewfinder Assist Overlays (Waveform, Peaking, Zebras)
@@ -358,10 +373,6 @@ fun CameraScreen(
                     .padding(top = 56.dp)
             )
         }
-
-        val isAnyWindowOpen = isPhotoFilterBarOpen || isPortraitStyleBarOpen ||
-                isCinemaSettingsOpen || isManualProOpen || isMoreModesOpen ||
-                (cameraMode == CameraMode.PORTRAIT && isPortraitSettingsOpen)
 
         // 3. Manual Pro Control Bar (Slide-up above bottom controls in Photo/Video modes)
         if (cameraMode != CameraMode.PORTRAIT) {
@@ -522,10 +533,10 @@ fun CameraScreen(
                 .padding(top = 110.dp)
         ) {
             toastMessage?.let { msg ->
-                Surface(
+                FrostedGlassBox(
                     shape = RoundedCornerShape(20.dp),
-                    color = Color.Black.copy(alpha = 0.8f),
-                    border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.2f)),
+                    elevation = 16.dp,
+                    baseAlpha = 0.78f,
                     modifier = Modifier.testTag("camera_toast")
                 ) {
                     Text(

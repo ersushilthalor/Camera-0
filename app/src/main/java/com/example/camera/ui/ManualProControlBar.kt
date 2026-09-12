@@ -30,6 +30,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.camera.model.*
+import com.example.camera.ui.components.FrostedGlassBox
 import com.example.camera.viewmodel.ProControlTab
 import kotlin.math.roundToInt
 
@@ -66,21 +67,18 @@ fun ManualProControlBar(
         exit = slideOutVertically(targetOffsetY = { it }) + fadeOut(),
         modifier = modifier
     ) {
-        Box(
+        FrostedGlassBox(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 12.dp, vertical = 6.dp)
-                .clip(RoundedCornerShape(24.dp))
-                .background(Color(0xF0141418))
-                .border(
-                    width = 1.dp,
-                    color = Color.White.copy(alpha = 0.18f),
-                    shape = RoundedCornerShape(24.dp)
-                )
-                .padding(vertical = 12.dp)
-                .testTag("manual_pro_bar")
+                .testTag("manual_pro_bar"),
+            shape = RoundedCornerShape(24.dp),
+            elevation = 20.dp,
+            baseAlpha = 0.74f
         ) {
-            Column {
+            Column(
+                modifier = Modifier.padding(vertical = 12.dp)
+            ) {
             // Lock Indicators & Top Toggles
             Row(
                 modifier = Modifier
