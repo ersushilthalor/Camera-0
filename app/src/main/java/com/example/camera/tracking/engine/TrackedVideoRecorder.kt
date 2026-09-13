@@ -10,6 +10,7 @@ import android.media.MediaCodecInfo
 import android.media.MediaFormat
 import android.media.MediaMuxer
 import android.os.Build
+import android.os.ParcelFileDescriptor
 import android.util.Log
 import android.view.Surface
 import com.example.camera.tracking.model.CropWindow
@@ -36,6 +37,7 @@ class TrackedVideoRecorder {
 
     private var mediaCodec: MediaCodec? = null
     private var mediaMuxer: MediaMuxer? = null
+    private var muxerPfd: ParcelFileDescriptor? = null
     private var inputSurface: Surface? = null
     private var videoTrackIndex = -1
     private var isMuxerStarted = false
@@ -106,8 +108,18 @@ class TrackedVideoRecorder {
             inputSurface = codec.createInputSurface()
             codec.start()
 
+            destinationFile.parentFile?.mkdirs()
+            if (destinationFile.exists()) destinationFile.delete()
+            destinationFile.createNewFile()
+
             mediaCodec = codec
-            mediaMuxer = MediaMuxer(destinationFile.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+            mediaMuxer = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val pfd = ParcelFileDescriptor.open(destinationFile, ParcelFileDescriptor.MODE_READ_WRITE)
+                muxerPfd = pfd
+                MediaMuxer(pfd.fileDescriptor, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+            } else {
+                MediaMuxer(destinationFile.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+            }
             videoTrackIndex = -1
             isMuxerStarted = false
             frameIndex = 0
@@ -255,6 +267,10 @@ class TrackedVideoRecorder {
             Log.w(TAG, "Error releasing muxer: ${e.message}")
         }
         mediaMuxer = null
+        try {
+            muxerPfd?.close()
+        } catch (ignored: Exception) {}
+        muxerPfd = null
         isMuxerStarted = false
         videoTrackIndex = -1
     }

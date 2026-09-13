@@ -18,6 +18,7 @@ import android.media.ImageReader
 import android.media.MediaCodec
 import android.media.MediaCodecInfo
 import android.media.MediaRecorder
+import android.media.MediaScannerConnection
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
@@ -70,6 +71,8 @@ class Camera2Engine(private val context: Context) {
     private var videoRecordingFileDescriptor: ParcelFileDescriptor? = null
     private var currentRecordingTempFile: File? = null
     private var currentVideoUri: Uri? = null
+    private var currentVideoFileName: String? = null
+    private var currentVideoMimeType: String? = null
 
     // Initialization & Safety States
     private val _isCameraInitialized = MutableStateFlow(false)
@@ -1457,8 +1460,8 @@ class Camera2Engine(private val context: Context) {
 
     private fun applyContinuousDollyZoom(zoom: Float) {
         val now = System.currentTimeMillis()
-        if (now - lastDollyApplyTime < 33) return // 30fps throttle
-        if (kotlin.math.abs(zoom - lastAppliedDollyZoom) < 0.008f) return
+        if (now - lastDollyApplyTime < 16) return // 60fps responsive tracking
+        if (kotlin.math.abs(zoom - lastAppliedDollyZoom) < 0.002f) return
         lastDollyApplyTime = now
         lastAppliedDollyZoom = zoom
 
@@ -2710,34 +2713,22 @@ class Camera2Engine(private val context: Context) {
             val mimeType = if (extension == "webm") "video/webm" else "video/mp4"
             val fileName = "${prefix}$timeStamp.$extension"
 
-            // 1. Ensure cache directory exists and create dedicated temporary recording file
-            val cacheDir = context.cacheDir.apply { mkdirs() }
+            currentVideoFileName = fileName
+            currentVideoMimeType = mimeType
+
+            // 1. Ensure directory exists and create dedicated temporary recording file
+            val recordingDir = context.externalCacheDir ?: context.cacheDir
+            recordingDir.mkdirs()
             val tempFileName = if (isCinema) {
                 "cinema_temp_${System.currentTimeMillis()}.$extension"
             } else {
                 "rec_temp_${System.currentTimeMillis()}.$extension"
             }
-            val tempFile = File(cacheDir, tempFileName).apply {
+            val tempFile = File(recordingDir, tempFileName).apply {
                 if (exists()) delete()
                 createNewFile()
             }
             currentRecordingTempFile = tempFile
-
-            val contentValues = ContentValues().apply {
-                put(MediaStore.Video.Media.DISPLAY_NAME, fileName)
-                put(MediaStore.Video.Media.MIME_TYPE, mimeType)
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    put(MediaStore.Video.Media.RELATIVE_PATH, "DCIM/Camera")
-                    put(MediaStore.Video.Media.IS_PENDING, 1)
-                }
-            }
-
-            val uri = context.contentResolver.insert(
-                MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
-                contentValues
-            ) ?: throw IllegalStateException("Cannot create MediaStore video record")
-
-            currentVideoUri = uri
 
             // Software Codec Check for Cinema Mode (VP9 & Apple ProRes 422 10-bit)
             if (isSoftwareCinema) {
@@ -2791,10 +2782,6 @@ class Camera2Engine(private val context: Context) {
                                 try { f.delete() } catch (ignored: Exception) {}
                                 currentRecordingTempFile = null
                             }
-                            currentVideoUri?.let { u ->
-                                try { context.contentResolver.delete(u, null, null) } catch (ignored: Exception) {}
-                                currentVideoUri = null
-                            }
                             onError("Failed to configure cinema recording capture session")
                         }
                     },
@@ -2823,7 +2810,15 @@ class Camera2Engine(private val context: Context) {
                 }
                 setVideoSource(MediaRecorder.VideoSource.SURFACE)
                 setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
-                setOutputFile(tempFile.absolutePath)
+
+                // Passing ParcelFileDescriptor avoids permission/ENOENT issues in cameraserver process
+                val pfd = ParcelFileDescriptor.open(tempFile, ParcelFileDescriptor.MODE_READ_WRITE)
+                videoRecordingFileDescriptor = pfd
+                setOutputFile(pfd.fileDescriptor)
+
+                setVideoEncodingBitRate(bitrate)
+                setVideoFrameRate(targetFps)
+                setVideoSize(videoRes.width, videoRes.height)
                 setVideoEncodingBitRate(bitrate)
                 setVideoFrameRate(targetFps)
                 setVideoSize(videoRes.width, videoRes.height)
@@ -3017,51 +3012,47 @@ class Camera2Engine(private val context: Context) {
 
         try {
             val isCinema = (currentMode == CameraMode.CINEMA)
+            val fileName = currentVideoFileName ?: "VID_${System.currentTimeMillis()}.mp4"
+            val mimeType = currentVideoMimeType ?: "video/mp4"
+            currentVideoFileName = null
+            currentVideoMimeType = null
+
             if (isSoftwareCinemaRecording) {
                 isSoftwareCinemaRecording = false
                 videoTimerJob?.cancel()
                 _isRecordingVideo.value = false
                 val recordedFile = cinemaSoftwareRecorder.stopRecording()
-                val targetUri = currentVideoUri
-                currentVideoUri = null
                 currentRecordingTempFile = null
                 val activeLens = _selectedLens.value
                 val isFrontFacing = activeLens?.facing == CameraCharacteristics.LENS_FACING_FRONT
 
                 engineScope.launch(Dispatchers.IO) {
                     try {
-                        if (recordedFile != null && recordedFile.exists() && recordedFile.length() > 0 && targetUri != null) {
-                            context.contentResolver.openOutputStream(targetUri, "w")?.use { out ->
-                                recordedFile.inputStream().use { input ->
-                                    input.copyTo(out)
-                                }
-                            }
-                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                                val values = ContentValues().apply {
-                                    put(MediaStore.Video.Media.IS_PENDING, 0)
-                                    put(MediaStore.Video.Media.SIZE, recordedFile.length())
-                                }
-                                context.contentResolver.update(targetUri, values, null, null)
-                            }
-                            _lastCapturedMedia.value = CapturedMedia(
-                                uri = targetUri,
-                                isVideo = true,
-                                timestamp = System.currentTimeMillis(),
-                                displayName = if (isCinema) "Cinema Video" else "Video",
-                                isFrontCamera = isFrontFacing
+                        if (recordedFile != null && recordedFile.exists() && recordedFile.length() > 0) {
+                            val savedUri = saveVideoToGallery(
+                                tempFile = recordedFile,
+                                fileName = fileName,
+                                mimeType = mimeType,
+                                isCinema = isCinema,
+                                isFrontFacing = isFrontFacing
                             )
-                            Log.i(TAG, "Cinema software video successfully finalized: size=${recordedFile.length()} bytes, uri=$targetUri")
-                        } else {
-                            if (targetUri != null) {
-                                try { context.contentResolver.delete(targetUri, null, null) } catch (ignored: Exception) {}
+                            if (savedUri != null) {
+                                _lastCapturedMedia.value = CapturedMedia(
+                                    uri = savedUri,
+                                    isVideo = true,
+                                    timestamp = System.currentTimeMillis(),
+                                    displayName = if (isCinema) "Cinema Video" else "Video",
+                                    isFrontCamera = isFrontFacing
+                                )
+                                Log.i(TAG, "Cinema software video successfully saved to Gallery: size=${recordedFile.length()} bytes, uri=$savedUri")
+                            } else {
+                                Log.w(TAG, "Failed to save cinema software video to gallery")
                             }
+                        } else {
                             Log.w(TAG, "Recorded software cinema file was missing or empty (length=${recordedFile?.length() ?: 0})")
                         }
                     } catch (e: Exception) {
-                        Log.e(TAG, "Failed to write cinema recording to MediaStore", e)
-                        if (targetUri != null) {
-                            try { context.contentResolver.delete(targetUri, null, null) } catch (ignored: Exception) {}
-                        }
+                        Log.e(TAG, "Failed to save cinema recording to MediaStore", e)
                     } finally {
                         try { recordedFile?.delete() } catch (ignored: Exception) {}
                         updateStorageStats()
@@ -3090,46 +3081,37 @@ class Camera2Engine(private val context: Context) {
 
             val tempFile = currentRecordingTempFile
             currentRecordingTempFile = null
-            val targetUri = currentVideoUri
-            currentVideoUri = null
 
             val activeLens = _selectedLens.value
             val isFrontFacing = activeLens?.facing == CameraCharacteristics.LENS_FACING_FRONT
 
             engineScope.launch(Dispatchers.IO) {
                 try {
-                    if (tempFile != null && tempFile.exists() && tempFile.length() > 0 && targetUri != null) {
-                        context.contentResolver.openOutputStream(targetUri, "w")?.use { outStream ->
-                            tempFile.inputStream().use { inStream ->
-                                inStream.copyTo(outStream)
-                            }
-                        }
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                            val values = ContentValues().apply {
-                                put(MediaStore.Video.Media.IS_PENDING, 0)
-                                put(MediaStore.Video.Media.SIZE, tempFile.length())
-                            }
-                            context.contentResolver.update(targetUri, values, null, null)
-                        }
-                        _lastCapturedMedia.value = CapturedMedia(
-                            uri = targetUri,
-                            isVideo = true,
-                            timestamp = System.currentTimeMillis(),
-                            displayName = if (isCinema) "Cinema Video" else "Video",
-                            isFrontCamera = isFrontFacing
+                    if (tempFile != null && tempFile.exists() && tempFile.length() > 0) {
+                        val savedUri = saveVideoToGallery(
+                            tempFile = tempFile,
+                            fileName = fileName,
+                            mimeType = mimeType,
+                            isCinema = isCinema,
+                            isFrontFacing = isFrontFacing
                         )
-                        Log.i(TAG, "Hardware recorded video successfully finalized: size=${tempFile.length()} bytes, uri=$targetUri")
-                    } else {
-                        if (targetUri != null) {
-                            try { context.contentResolver.delete(targetUri, null, null) } catch (ignored: Exception) {}
+                        if (savedUri != null) {
+                            _lastCapturedMedia.value = CapturedMedia(
+                                uri = savedUri,
+                                isVideo = true,
+                                timestamp = System.currentTimeMillis(),
+                                displayName = if (isCinema) "Cinema Video" else "Video",
+                                isFrontCamera = isFrontFacing
+                            )
+                            Log.i(TAG, "Hardware recorded video successfully saved to Gallery: size=${tempFile.length()} bytes, uri=$savedUri")
+                        } else {
+                            Log.w(TAG, "Failed to save hardware recorded video to gallery")
                         }
+                    } else {
                         Log.w(TAG, "Hardware temp recorded file was missing or empty (length=${tempFile?.length() ?: 0})")
                     }
                 } catch (e: Exception) {
                     Log.e(TAG, "Error finalizing recorded video", e)
-                    if (targetUri != null) {
-                        try { context.contentResolver.delete(targetUri, null, null) } catch (ignored: Exception) {}
-                    }
                 } finally {
                     try { tempFile?.delete() } catch (ignored: Exception) {}
                     updateStorageStats()
@@ -3140,6 +3122,114 @@ class Camera2Engine(private val context: Context) {
         } catch (e: Exception) {
             Log.e(TAG, "Error stopping video recording", e)
             restartCamera()
+        }
+    }
+
+    /**
+     * Reliable Gallery saving pipeline for recorded videos with automatic fallback.
+     */
+    private suspend fun saveVideoToGallery(
+        tempFile: File,
+        fileName: String,
+        mimeType: String,
+        isCinema: Boolean,
+        isFrontFacing: Boolean
+    ): Uri? = withContext(Dispatchers.IO) {
+        if (!tempFile.exists() || tempFile.length() <= 0L) {
+            Log.w(TAG, "saveVideoToGallery: tempFile is missing or empty")
+            return@withContext null
+        }
+
+        val resolver = context.contentResolver
+        val contentValues = ContentValues().apply {
+            put(MediaStore.Video.Media.DISPLAY_NAME, fileName)
+            put(MediaStore.Video.Media.MIME_TYPE, mimeType)
+            put(MediaStore.Video.Media.DATE_ADDED, System.currentTimeMillis() / 1000)
+            put(MediaStore.Video.Media.DATE_TAKEN, System.currentTimeMillis())
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                put(MediaStore.Video.Media.RELATIVE_PATH, "DCIM/Camera")
+                put(MediaStore.Video.Media.IS_PENDING, 1)
+            } else {
+                val dcimDir = File(
+                    Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM),
+                    "Camera"
+                ).apply { if (!exists()) mkdirs() }
+                val targetFile = File(dcimDir, fileName)
+                put(MediaStore.Video.Media.DATA, targetFile.absolutePath)
+            }
+        }
+
+        val collection = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+        } else {
+            MediaStore.Video.Media.EXTERNAL_CONTENT_URI
+        }
+
+        var targetUri: Uri? = null
+        try {
+            // Ensure physical DCIM/Camera directory exists
+            try {
+                val dcimDir = File(
+                    Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM),
+                    "Camera"
+                )
+                if (!dcimDir.exists()) dcimDir.mkdirs()
+            } catch (ignored: Exception) {}
+
+            targetUri = resolver.insert(collection, contentValues)
+            if (targetUri != null) {
+                resolver.openOutputStream(targetUri, "w")?.use { out ->
+                    tempFile.inputStream().use { input ->
+                        input.copyTo(out)
+                    }
+                    out.flush()
+                }
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    val updateValues = ContentValues().apply {
+                        put(MediaStore.Video.Media.IS_PENDING, 0)
+                        put(MediaStore.Video.Media.SIZE, tempFile.length())
+                    }
+                    resolver.update(targetUri, updateValues, null, null)
+                }
+
+                MediaScannerConnection.scanFile(
+                    context,
+                    arrayOf(tempFile.absolutePath),
+                    arrayOf(mimeType)
+                ) { _, scannedUri ->
+                    Log.d(TAG, "Video scanned into MediaStore: $scannedUri")
+                }
+                return@withContext targetUri
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Primary MediaStore insertion failed, falling back to direct DCIM/Camera write", e)
+            if (targetUri != null) {
+                try { resolver.delete(targetUri, null, null) } catch (ignored: Exception) {}
+            }
+        }
+
+        // Direct DCIM/Camera fallback
+        try {
+            val dcimDir = File(
+                Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM),
+                "Camera"
+            ).apply { if (!exists()) mkdirs() }
+            val targetFile = File(dcimDir, fileName)
+            tempFile.copyTo(targetFile, overwrite = true)
+
+            var scannedUri: Uri? = null
+            MediaScannerConnection.scanFile(
+                context,
+                arrayOf(targetFile.absolutePath),
+                arrayOf(mimeType)
+            ) { _, uri ->
+                scannedUri = uri
+                Log.d(TAG, "Fallback video scanned: $uri")
+            }
+            return@withContext scannedUri ?: Uri.fromFile(targetFile)
+        } catch (e: Exception) {
+            Log.e(TAG, "Fallback video save failed", e)
+            return@withContext null
         }
     }
 

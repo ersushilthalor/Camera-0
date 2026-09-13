@@ -50,8 +50,23 @@ object MediaStorageHelper {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                     put(MediaStore.Images.Media.RELATIVE_PATH, SUBFOLDER)
                     put(MediaStore.Images.Media.IS_PENDING, 1)
+                } else {
+                    val dcimDir = File(
+                        Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM),
+                        "Camera3X"
+                    ).apply { if (!exists()) mkdirs() }
+                    val targetFile = File(dcimDir, fileName)
+                    put(MediaStore.Images.Media.DATA, targetFile.absolutePath)
                 }
             }
+
+            try {
+                val dcimDir = File(
+                    Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM),
+                    "Camera3X"
+                )
+                if (!dcimDir.exists()) dcimDir.mkdirs()
+            } catch (ignored: Exception) {}
 
             val resolver = context.contentResolver
             val contentUri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, contentValues)
@@ -115,8 +130,23 @@ object MediaStorageHelper {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                     put(MediaStore.Video.Media.RELATIVE_PATH, SUBFOLDER)
                     put(MediaStore.Video.Media.IS_PENDING, 1)
+                } else {
+                    val dcimDir = File(
+                        Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM),
+                        "Camera3X"
+                    ).apply { if (!exists()) mkdirs() }
+                    val targetFile = File(dcimDir, fileName)
+                    put(MediaStore.Video.Media.DATA, targetFile.absolutePath)
                 }
             }
+
+            try {
+                val dcimDir = File(
+                    Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM),
+                    "Camera3X"
+                )
+                if (!dcimDir.exists()) dcimDir.mkdirs()
+            } catch (ignored: Exception) {}
 
             val resolver = context.contentResolver
             val contentUri = resolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, contentValues)

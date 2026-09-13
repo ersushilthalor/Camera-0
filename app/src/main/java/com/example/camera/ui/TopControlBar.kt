@@ -204,18 +204,32 @@ fun TopControlBar(
                             .background(Color(0xB21A1A1E))
                             .border(1.dp, accentColor, RoundedCornerShape(17.dp))
                             .clickable { onPortraitApertureClick() }
-                            .padding(horizontal = 12.dp),
+                            .padding(horizontal = 12.dp)
+                            .testTag("portrait_aperture_pill"),
                         contentAlignment = Alignment.Center
                     ) {
-                        Text(
-                            text = portraitAperture,
-                            color = accentColor,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold,
-                            letterSpacing = 0.5.sp,
-                            maxLines = 1,
-                            softWrap = false
-                        )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Text(
+                                text = "f",
+                                color = accentColor,
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Bold,
+                                fontStyle = androidx.compose.ui.text.font.FontStyle.Italic,
+                                fontFamily = androidx.compose.ui.text.font.FontFamily.Serif
+                            )
+                            Text(
+                                text = portraitAperture,
+                                color = accentColor,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                letterSpacing = 0.5.sp,
+                                maxLines = 1,
+                                softWrap = false
+                            )
+                        }
                     }
                 }
                 CameraMode.VIDEO -> {

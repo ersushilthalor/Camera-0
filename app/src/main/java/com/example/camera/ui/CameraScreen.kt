@@ -286,6 +286,8 @@ fun CameraScreen(
             videoFps = videoFps,
             photoMegapixelMode = photoMegapixelMode,
             cinemaConfig = cinemaConfig,
+            portraitAperture = portraitConfig.simulatedAperture,
+            onPortraitApertureClick = { viewModel.setPortraitSettingsOpen(!isPortraitSettingsOpen) },
             onPhotoFilterClick = { viewModel.togglePhotoFilterBar() },
             activePhotoFilter = selectedPhotoFilter,
             selectedPortraitStyle = portraitConfig.selectedStyle,
@@ -389,6 +391,35 @@ fun CameraScreen(
                 onClose = { viewModel.setPortraitSettingsOpen(false) },
                 modifier = Modifier.padding(horizontal = 12.dp)
             )
+        }
+
+        // 3c. Floating 'f' button in Portrait Mode
+        if (cameraMode == CameraMode.PORTRAIT) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(end = 16.dp, bottom = 220.dp)
+                    .size(46.dp)
+                    .clip(CircleShape)
+                    .background(if (isPortraitSettingsOpen) Color(0xFFFFD54F) else Color(0xD91E1E24))
+                    .border(
+                        width = 1.5.dp,
+                        color = if (isPortraitSettingsOpen) Color(0xFFFFD54F) else Color.White.copy(alpha = 0.35f),
+                        shape = CircleShape
+                    )
+                    .clickable { viewModel.setPortraitSettingsOpen(!isPortraitSettingsOpen) }
+                    .testTag("portrait_f_button"),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = "f",
+                    color = if (isPortraitSettingsOpen) Color.Black else Color(0xFFFFD54F),
+                    fontSize = 22.sp,
+                    fontWeight = FontWeight.Bold,
+                    fontStyle = androidx.compose.ui.text.font.FontStyle.Italic,
+                    fontFamily = androidx.compose.ui.text.font.FontFamily.Serif
+                )
+            }
         }
 
         // 3d. Dedicated Cinema Mode Settings Window (matching reference image)

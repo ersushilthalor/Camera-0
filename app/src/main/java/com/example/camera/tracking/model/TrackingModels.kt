@@ -237,7 +237,6 @@ data class CameraTrackingUiState(
     val isTorchOn: Boolean = false,
     val selectedLens: TrackingCameraLens = TrackingCameraLens.WIDE,
     val availableLenses: List<TrackingCameraLens> = listOf(
-        TrackingCameraLens.ULTRAWIDE,
         TrackingCameraLens.WIDE,
         TrackingCameraLens.FRONT
     ),

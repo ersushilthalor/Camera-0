@@ -3,6 +3,7 @@ package com.example.camera.engine
 import android.content.Context
 import android.media.*
 import android.os.Build
+import android.os.ParcelFileDescriptor
 import android.util.Log
 import android.view.Surface
 import com.example.camera.model.CinemaCodec
@@ -46,6 +47,7 @@ class CinemaSoftwareRecordingEngine(private val context: Context) {
     // MediaMuxer Synchronization
     private val muxerLock = Any()
     private var mediaMuxer: MediaMuxer? = null
+    private var cinemaMuxerPfd: ParcelFileDescriptor? = null
     private var isMuxerStarted = false
     private var videoTrackIndex = -1
     private var audioTrackIndex = -1
@@ -137,9 +139,17 @@ class CinemaSoftwareRecordingEngine(private val context: Context) {
 
         synchronized(muxerLock) {
             try {
-                mediaMuxer = MediaMuxer(destFile.absolutePath, muxerOutputFormat)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    val pfd = ParcelFileDescriptor.open(destFile, ParcelFileDescriptor.MODE_READ_WRITE)
+                    cinemaMuxerPfd = pfd
+                    mediaMuxer = MediaMuxer(pfd.fileDescriptor, muxerOutputFormat)
+                } else {
+                    mediaMuxer = MediaMuxer(destFile.absolutePath, muxerOutputFormat)
+                }
             } catch (e: Exception) {
                 Log.e(TAG, "MediaMuxer construction failed for ${destFile.absolutePath}", e)
+                try { cinemaMuxerPfd?.close() } catch (ignored: Exception) {}
+                cinemaMuxerPfd = null
                 try { destFile.delete() } catch (ignored: Exception) {}
                 isRecording.set(false)
                 val detail = when (e) {
@@ -239,6 +249,10 @@ class CinemaSoftwareRecordingEngine(private val context: Context) {
                 Log.w(TAG, "MediaMuxer release failed", e)
             }
             mediaMuxer = null
+            try {
+                cinemaMuxerPfd?.close()
+            } catch (ignored: Exception) {}
+            cinemaMuxerPfd = null
         }
 
         val file = outputFile

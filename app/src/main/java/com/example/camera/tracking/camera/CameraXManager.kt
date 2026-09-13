@@ -46,6 +46,7 @@ class CameraXManager(
     data class UltraWideDeviceInfo(
         val physicalCameraId: String? = null,
         val minOpticalZoomRatio: Float = 0.5f,
+        val hasOpticalZoomRatio: Boolean = false,
         val hasOpticalUltraWide: Boolean = false
     )
 
@@ -69,7 +70,7 @@ class CameraXManager(
         return if (ultraWideInfo.hasOpticalUltraWide) {
             listOf(TrackingCameraLens.ULTRAWIDE, TrackingCameraLens.WIDE, TrackingCameraLens.FRONT)
         } else {
-            listOf(TrackingCameraLens.ULTRAWIDE, TrackingCameraLens.WIDE, TrackingCameraLens.FRONT)
+            listOf(TrackingCameraLens.WIDE, TrackingCameraLens.FRONT)
         }
     }
 
@@ -103,6 +104,11 @@ class CameraXManager(
      * the optical sensor via Camera2 CONTROL_ZOOM_RATIO without unbinding or stalling the preview stream.
      */
     fun setLens(lens: TrackingCameraLens, onReady: (Boolean) -> Unit = {}) {
+        if (lens == TrackingCameraLens.ULTRAWIDE && !ultraWideInfo.hasOpticalUltraWide) {
+            Log.w(TAG, "Cannot switch to ULTRAWIDE: Physical ultra-wide lens or optical zoom <1.0x is not available on this device")
+            onReady(false)
+            return
+        }
         if (activeLens == lens && activeCamera != null) return
         val prevLens = activeLens
         activeLens = lens
@@ -365,37 +371,28 @@ class CameraXManager(
 
         var foundPhysicalId: String? = null
         var detectedMinZoom = 0.5f
+        var hasOpticalZoomRatio = false
         var hasOptical = false
 
         try {
             val officialIds = try { cameraManager.cameraIdList.toList() } catch (t: Throwable) { emptyList() }
-            val candidateIds = linkedSetOf<String>()
-            candidateIds.addAll(officialIds)
-            for (testId in 0..12) {
-                val sId = testId.toString()
-                if (!candidateIds.contains(sId)) {
-                    try {
-                        val chars = cameraManager.getCameraCharacteristics(sId)
-                        if (chars != null) candidateIds.add(sId)
-                    } catch (ignored: Throwable) {}
-                }
-            }
 
-            for (id in candidateIds) {
+            for (id in officialIds) {
                 val chars = try { cameraManager.getCameraCharacteristics(id) } catch (t: Throwable) { continue }
                 val facing = chars.get(CameraCharacteristics.LENS_FACING)
                 if (facing == CameraCharacteristics.LENS_FACING_BACK) {
                     // Check CONTROL_ZOOM_RATIO_RANGE (Android 11+)
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                         val zoomRange = chars.get(CameraCharacteristics.CONTROL_ZOOM_RATIO_RANGE)
-                        if (zoomRange != null && zoomRange.lower <= 0.9f) {
+                        if (zoomRange != null && zoomRange.lower <= 0.85f) {
+                            hasOpticalZoomRatio = true
                             hasOptical = true
                             detectedMinZoom = zoomRange.lower
                             Log.d(TAG, "Found optical ultra-wide zoom range on camera $id: ${zoomRange.lower}..${zoomRange.upper}")
                         }
                     }
 
-                    // Check focal length & FOV for physical ultra-wide
+                    // Check if this official camera is a standalone physical ultra-wide lens
                     val focalLengths = chars.get(CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS) ?: floatArrayOf(4.0f)
                     val sensorSize = chars.get(CameraCharacteristics.SENSOR_INFO_PHYSICAL_SIZE)
                     val cropFactor = if (sensorSize != null && sensorSize.width > 0) 36f / sensorSize.width else 7f
@@ -405,33 +402,12 @@ class CameraXManager(
                             (2.0 * kotlin.math.atan(sensorSize.width.toDouble() / (2.0 * focal.toDouble())) * (180.0 / Math.PI)).toFloat()
                         } else 0f
 
-                        if (eq35mm in 1.0f..23.5f || focal <= 2.8f || fov >= 85f) {
+                        if ((eq35mm in 8.0f..23.5f || focal <= 2.8f || fov >= 85f) && focal > 0.5f) {
                             foundPhysicalId = id
                             hasOptical = true
                             Log.d(TAG, "Found physical ultra-wide camera $id: focal=${focal}mm, eq35=${eq35mm}mm, fov=${fov}°")
                             break
                         }
-                    }
-
-                    // Android 9+ physical sub-cameras inside logical multi-camera
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                        try {
-                            val physIds = chars.physicalCameraIds
-                            for (pId in physIds) {
-                                val pChars = cameraManager.getCameraCharacteristics(pId)
-                                val pFocals = pChars.get(CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS) ?: floatArrayOf(4.0f)
-                                val pSize = pChars.get(CameraCharacteristics.SENSOR_INFO_PHYSICAL_SIZE)
-                                val pCrop = if (pSize != null && pSize.width > 0) 36f / pSize.width else 7f
-                                for (pf in pFocals) {
-                                    val peq35 = pf * pCrop
-                                    if (peq35 in 1.0f..23.5f || pf <= 2.6f) {
-                                        foundPhysicalId = pId
-                                        hasOptical = true
-                                        break
-                                    }
-                                }
-                            }
-                        } catch (t: Throwable) {}
                     }
                 }
             }
@@ -442,6 +418,7 @@ class CameraXManager(
         return UltraWideDeviceInfo(
             physicalCameraId = foundPhysicalId,
             minOpticalZoomRatio = detectedMinZoom.coerceIn(0.3f, 0.7f),
+            hasOpticalZoomRatio = hasOpticalZoomRatio,
             hasOpticalUltraWide = hasOptical
         )
     }

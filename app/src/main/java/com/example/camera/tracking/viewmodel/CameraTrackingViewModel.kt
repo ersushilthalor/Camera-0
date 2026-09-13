@@ -299,7 +299,9 @@ class CameraTrackingViewModel(application: Application) : AndroidViewModel(appli
     }
 
     private fun startVideoRecording(context: Context) {
-        val tempVideoFile = File(context.cacheDir, "temp_rec_${System.currentTimeMillis()}.mp4")
+        val recordingDir = context.externalCacheDir ?: context.cacheDir
+        recordingDir.mkdirs()
+        val tempVideoFile = File(recordingDir, "temp_rec_${System.currentTimeMillis()}.mp4")
         val success = videoRecorder.start(
             destinationFile = tempVideoFile,
             resolution = _uiState.value.videoResolution,
@@ -420,6 +422,10 @@ class CameraTrackingViewModel(application: Application) : AndroidViewModel(appli
     }
 
     fun setCameraLens(lens: TrackingCameraLens) {
+        if (!_uiState.value.availableLenses.contains(lens)) {
+            android.util.Log.w("CameraTrackingViewModel", "Requested lens $lens is not available on this device")
+            return
+        }
         _uiState.update { it.copy(selectedLens = lens, isFrontCamera = lens.isFront) }
         cameraXManager?.setLens(lens)
     }
