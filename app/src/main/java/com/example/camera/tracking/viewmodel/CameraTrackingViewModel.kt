@@ -426,6 +426,8 @@ class CameraTrackingViewModel(application: Application) : AndroidViewModel(appli
             android.util.Log.w("CameraTrackingViewModel", "Requested lens $lens is not available on this device")
             return
         }
+        // Smoothly unlock tracking to cleanly reorient tracking and crop bounds to new physical sensor
+        unlockTracking()
         _uiState.update { it.copy(selectedLens = lens, isFrontCamera = lens.isFront) }
         cameraXManager?.setLens(lens)
     }

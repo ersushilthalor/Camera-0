@@ -72,8 +72,24 @@ class GyroStabilizationEngine(private val context: Context) : SensorEventListene
             smoothPanYaw = 0f
             currentOffsetDx = 0f
             currentOffsetDy = 0f
-            sensorManager.registerListener(this, gyroSensor, SensorManager.SENSOR_DELAY_FASTEST)
-            Log.d(TAG, "GyroStabilization sensor listening started (FASTEST)")
+            try {
+                val registered = sensorManager.registerListener(this, gyroSensor, SensorManager.SENSOR_DELAY_GAME)
+                if (!registered) {
+                    sensorManager.registerListener(this, gyroSensor, SensorManager.SENSOR_DELAY_UI)
+                }
+                Log.d(TAG, "GyroStabilization sensor listening started (SENSOR_DELAY_GAME)")
+            } catch (se: SecurityException) {
+                Log.w(TAG, "SecurityException registering gyro (HIGH_SAMPLING_RATE_SENSORS), falling back to UI rate: ${se.message}")
+                try {
+                    sensorManager.registerListener(this, gyroSensor, SensorManager.SENSOR_DELAY_UI)
+                } catch (t: Throwable) {
+                    Log.e(TAG, "Fail-safe gyro sensor registration fallback failed", t)
+                    isSensorRunning.set(false)
+                }
+            } catch (e: Throwable) {
+                Log.e(TAG, "Fail-safe gyro sensor registration failed", e)
+                isSensorRunning.set(false)
+            }
         }
     }
 
