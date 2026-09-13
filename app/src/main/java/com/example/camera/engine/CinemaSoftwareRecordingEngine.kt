@@ -113,7 +113,20 @@ class CinemaSoftwareRecordingEngine(private val context: Context) {
 
         val is10Bit = bitDepth == LogBitDepth.BIT_10
 
-        // 1. Setup MediaMuxer according to container format and codec support
+        // 1. Ensure parent directories and destination file exist before MediaMuxer initializes
+        try {
+            destFile.parentFile?.mkdirs()
+            if (destFile.exists()) {
+                destFile.delete()
+            }
+            destFile.createNewFile()
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to create cinema temp file at ${destFile.absolutePath}", e)
+            isRecording.set(false)
+            throw IllegalStateException("Cannot create cinema temp file: ${e.message}", e)
+        }
+
+        // 2. Setup MediaMuxer according to container format and codec support
         val hasOpus = isAudioEnabled && hasEncoderForMime(MediaFormat.MIMETYPE_AUDIO_OPUS)
         val isWebm = (codec == CinemaCodec.VP9) && (!isAudioEnabled || hasOpus || destFile.name.endsWith(".webm"))
         val muxerOutputFormat = if (isWebm) {
@@ -123,13 +136,39 @@ class CinemaSoftwareRecordingEngine(private val context: Context) {
         }
 
         synchronized(muxerLock) {
-            mediaMuxer = MediaMuxer(destFile.absolutePath, muxerOutputFormat)
+            try {
+                mediaMuxer = MediaMuxer(destFile.absolutePath, muxerOutputFormat)
+            } catch (e: Exception) {
+                Log.e(TAG, "MediaMuxer construction failed for ${destFile.absolutePath}", e)
+                try { destFile.delete() } catch (ignored: Exception) {}
+                isRecording.set(false)
+                val detail = when (e) {
+                    is MediaCodec.CodecException -> "MediaCodec error: ${e.diagnosticInfo} (code=${e.errorCode})"
+                    else -> e.localizedMessage ?: e.message ?: "MediaMuxer initialization failed"
+                }
+                throw IllegalStateException("MediaMuxer setup failed: $detail", e)
+            }
         }
 
-        // 2. Setup Video MediaCodec
-        val inputSurface = setupVideoPipeline(width, height, fps, bitrate, codec, is10Bit, isWebm)
+        // 3. Setup Video MediaCodec
+        val inputSurface = try {
+            setupVideoPipeline(width, height, fps, bitrate, codec, is10Bit, isWebm)
+        } catch (e: Exception) {
+            Log.e(TAG, "Video pipeline setup failed", e)
+            synchronized(muxerLock) {
+                try { mediaMuxer?.release() } catch (ignored: Exception) {}
+                mediaMuxer = null
+            }
+            try { destFile.delete() } catch (ignored: Exception) {}
+            isRecording.set(false)
+            val detail = when (e) {
+                is MediaCodec.CodecException -> "MediaCodec error: ${e.diagnosticInfo} (code=${e.errorCode})"
+                else -> e.localizedMessage ?: e.message ?: "Video encoder setup failed"
+            }
+            throw IllegalStateException("Video encoder initialization failed: $detail", e)
+        }
 
-        // 3. Setup Audio Pipeline if enabled
+        // 4. Setup Audio Pipeline if enabled
         if (isAudioEnabled) {
             try {
                 setupAudioPipeline(isWebm)

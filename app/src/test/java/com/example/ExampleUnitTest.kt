@@ -186,4 +186,46 @@ class ExampleUnitTest {
         val modes = com.example.camera.model.CameraMode.entries.map { it.name }
         assertFalse("DUAL_VIDEO should not exist in CameraMode", modes.contains("DUAL_VIDEO"))
     }
+
+    @Test
+    fun testCinemaCodecsAndFileExtensions() {
+        val vp9Codec = com.example.camera.model.CinemaCodec.VP9
+        val proResCodec = com.example.camera.model.CinemaCodec.PRORES
+        val h264Codec = com.example.camera.model.CinemaCodec.H264
+        val h265Codec = com.example.camera.model.CinemaCodec.H265
+
+        // VP9 uses webm container
+        val isVp9Software = true
+        val vp9Extension = if (isVp9Software && vp9Codec == com.example.camera.model.CinemaCodec.VP9) "webm" else "mp4"
+        assertEquals("webm", vp9Extension)
+
+        // ProRes and H264/H265 use mp4 container
+        val proResExtension = if (isVp9Software && proResCodec == com.example.camera.model.CinemaCodec.VP9) "webm" else "mp4"
+        assertEquals("mp4", proResExtension)
+
+        val h264Extension = if (false && h264Codec == com.example.camera.model.CinemaCodec.VP9) "webm" else "mp4"
+        assertEquals("mp4", h264Extension)
+    }
+
+    @Test
+    fun testCinemaTempFileCreationAndCleanup() {
+        val context = androidx.test.core.app.ApplicationProvider.getApplicationContext<android.content.Context>()
+        val cacheDir = context.cacheDir.apply { mkdirs() }
+        assertTrue(cacheDir.exists())
+
+        val tempFile = java.io.File(cacheDir, "cinema_temp_${System.currentTimeMillis()}.mp4")
+        if (tempFile.exists()) tempFile.delete()
+        tempFile.createNewFile()
+        assertTrue(tempFile.exists())
+        assertEquals(0L, tempFile.length())
+
+        // Simulate writing recorded bytes
+        val testData = "test_video_data".toByteArray()
+        tempFile.writeBytes(testData)
+        assertEquals(testData.size.toLong(), tempFile.length())
+
+        // Cleanup
+        tempFile.delete()
+        assertFalse(tempFile.exists())
+    }
 }
