@@ -64,6 +64,8 @@ fun BottomControlBar(
     onToggleProClick: () -> Unit = {},
     onGalleryClick: () -> Unit,
     onCinemaModeClick: (() -> Unit)? = null,
+    onSettingsClick: () -> Unit = {},
+    onTimerClick: () -> Unit = {},
     layoutConfig: ModeLayoutConfig = ModeLayoutConfig(),
     modifier: Modifier = Modifier
 ) {
@@ -235,6 +237,10 @@ fun BottomControlBar(
                                         ShutterStyle.SAMSUNG_CAPSULE -> Modifier.border(4.dp, Color.White, CircleShape).padding(4.dp)
                                         ShutterStyle.VIVO_GIMBAL -> Modifier.border(3.dp, accentColor, CircleShape)
                                         ShutterStyle.MINIMAL_ACCENT -> Modifier
+                                        ShutterStyle.PIXEL_SOLID -> Modifier.border(4.dp, Color.White, CircleShape).padding(3.dp)
+                                        ShutterStyle.LEICA_RED_DOT -> Modifier.border(3.dp, Color(0xFFE0E0E0), CircleShape).padding(3.dp)
+                                        ShutterStyle.CYBER_HOLO -> Modifier.border(2.5.dp, Color(0xFF00E5FF), CircleShape).padding(3.dp)
+                                        ShutterStyle.DSLR_KNURLED -> Modifier.border(4.dp, Color(0xFF555555), CircleShape).padding(2.dp)
                                     }
                                 )
                                 .clickable { onShutterClick() }
@@ -248,12 +254,19 @@ fun BottomControlBar(
 
                             when (cameraMode) {
                                 CameraMode.PHOTO, CameraMode.MORE, CameraMode.AI_SUBJECT_TRACKING -> {
+                                    val shutterColor = when (layoutConfig.shutterStyle) {
+                                        ShutterStyle.MINIMAL_ACCENT -> accentColor
+                                        ShutterStyle.LEICA_RED_DOT -> Color(0xFFE53935)
+                                        ShutterStyle.CYBER_HOLO -> Color(0xFF00E5FF)
+                                        ShutterStyle.DSLR_KNURLED -> Color(0xFFDDDDDD)
+                                        else -> Color.White
+                                    }
                                     Box(
                                         modifier = Modifier
                                             .size(shutterSize * 0.8f)
                                             .scale(buttonScale)
                                             .clip(CircleShape)
-                                            .background(if (layoutConfig.shutterStyle == ShutterStyle.MINIMAL_ACCENT) accentColor else Color.White)
+                                            .background(shutterColor)
                                     )
                                 }
                                 CameraMode.NIGHT -> {
@@ -477,6 +490,74 @@ fun BottomControlBar(
                                                 softWrap = false
                                             )
                                         }
+                                        ModeSelectorStyle.PIXEL_PILL -> {
+                                            Surface(
+                                                shape = RoundedCornerShape(20.dp),
+                                                color = if (isSelected) Color(0x3DFFFFFF) else Color.Transparent,
+                                                border = if (isSelected) androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.35f)) else null
+                                            ) {
+                                                Text(
+                                                    text = displayText,
+                                                    color = if (isSelected) Color.White else Color.White.copy(alpha = 0.65f),
+                                                    fontSize = layoutConfig.modeTextSizeSp.sp,
+                                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                                    fontFamily = fontFamily,
+                                                    letterSpacing = 0.5.sp,
+                                                    maxLines = 1,
+                                                    softWrap = false,
+                                                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)
+                                                )
+                                            }
+                                        }
+                                        ModeSelectorStyle.MONO_TICKER -> {
+                                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                                Text(
+                                                    text = displayText,
+                                                    color = if (isSelected) Color(0xFFE53935) else Color.White.copy(alpha = 0.6f),
+                                                    fontSize = layoutConfig.modeTextSizeSp.sp,
+                                                    fontWeight = if (isSelected) FontWeight.Black else FontWeight.Normal,
+                                                    fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                                                    letterSpacing = 1.5.sp
+                                                )
+                                                if (isSelected) {
+                                                    Spacer(modifier = Modifier.height(2.dp))
+                                                    Box(modifier = Modifier.width(16.dp).height(2.dp).background(Color(0xFFE53935)))
+                                                }
+                                            }
+                                        }
+                                        ModeSelectorStyle.CYBER_GLOW -> {
+                                            Surface(
+                                                shape = RoundedCornerShape(8.dp),
+                                                color = if (isSelected) Color(0x3300E5FF) else Color.Transparent,
+                                                border = if (isSelected) androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF00E5FF)) else null
+                                            ) {
+                                                Text(
+                                                    text = displayText,
+                                                    color = if (isSelected) Color(0xFF00E5FF) else Color.White.copy(alpha = 0.7f),
+                                                    fontSize = layoutConfig.modeTextSizeSp.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                                                    letterSpacing = 1.sp,
+                                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
+                                                )
+                                            }
+                                        }
+                                        ModeSelectorStyle.DSLR_DIAL -> {
+                                            Surface(
+                                                shape = RoundedCornerShape(4.dp),
+                                                color = if (isSelected) Color(0xFF262C36) else Color.Transparent,
+                                                border = if (isSelected) androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFFFB300)) else null
+                                            ) {
+                                                Text(
+                                                    text = displayText,
+                                                    color = if (isSelected) Color(0xFFFFB300) else Color.Gray,
+                                                    fontSize = layoutConfig.modeTextSizeSp.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                                                )
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -493,6 +574,99 @@ fun BottomControlBar(
                     shutterRowContent()
                     Spacer(modifier = Modifier.height(18.dp))
                     modeCarouselContent()
+                }
+
+                // Auxiliary Quick-Access Dock for Pixel Style (matches reference screenshot)
+                if (layoutConfig.modeSelectorStyle == ModeSelectorStyle.PIXEL_PILL && !isRecordingVideo) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(start = 36.dp, end = 36.dp, top = 14.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        // Left: Settings button
+                        IconButton(
+                            onClick = onSettingsClick,
+                            modifier = Modifier
+                                .size(40.dp)
+                                .clip(CircleShape)
+                                .background(Color(0x33FFFFFF))
+                                .testTag("pixel_dock_settings_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Outlined.Settings,
+                                contentDescription = "Settings",
+                                tint = Color.White,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+
+                        // Center: Photo / Video Quick-Switch Pill
+                        Surface(
+                            shape = RoundedCornerShape(22.dp),
+                            color = Color(0x33FFFFFF),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.25f)),
+                            modifier = Modifier.testTag("pixel_dock_mode_switcher")
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(3.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                val isPhotoMode = (cameraMode == CameraMode.PHOTO || cameraMode == CameraMode.PORTRAIT)
+                                val isVideoMode = (cameraMode == CameraMode.VIDEO || cameraMode == CameraMode.CINEMA)
+
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(18.dp))
+                                        .background(if (isPhotoMode) Color.White else Color.Transparent)
+                                        .clickable { onModeSelected(CameraMode.PHOTO) }
+                                        .padding(horizontal = 16.dp, vertical = 6.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Outlined.CameraAlt,
+                                        contentDescription = "Photo",
+                                        tint = if (isPhotoMode) Color.Black else Color.White,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(18.dp))
+                                        .background(if (isVideoMode) Color.White else Color.Transparent)
+                                        .clickable { onModeSelected(CameraMode.VIDEO) }
+                                        .padding(horizontal = 16.dp, vertical = 6.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Outlined.Videocam,
+                                        contentDescription = "Video",
+                                        tint = if (isVideoMode) Color.Black else Color.White,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                            }
+                        }
+
+                        // Right: Quick Timer button
+                        IconButton(
+                            onClick = onTimerClick,
+                            modifier = Modifier
+                                .size(40.dp)
+                                .clip(CircleShape)
+                                .background(Color(0x33FFFFFF))
+                                .testTag("pixel_dock_timer_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Outlined.Timer,
+                                contentDescription = "Timer",
+                                tint = Color.White,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                    }
                 }
             }
         }

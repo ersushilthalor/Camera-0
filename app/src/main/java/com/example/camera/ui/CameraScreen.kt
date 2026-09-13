@@ -170,6 +170,20 @@ fun CameraScreen(
     val isPhotoFilterBarOpen by viewModel.isPhotoFilterBarOpen.collectAsStateWithLifecycle()
     val isPortraitStyleBarOpen by viewModel.isPortraitStyleBarOpen.collectAsStateWithLifecycle()
 
+    val videoCodec by viewModel.videoCodec.collectAsStateWithLifecycle()
+    val jpegQuality by viewModel.jpegQuality.collectAsStateWithLifecycle()
+    val volumeKeyAction by viewModel.volumeKeyAction.collectAsStateWithLifecycle()
+    val doubleTapAction by viewModel.doubleTapAction.collectAsStateWithLifecycle()
+    val shutterFeedback by viewModel.shutterFeedback.collectAsStateWithLifecycle()
+    val antibandingMode by viewModel.antibandingMode.collectAsStateWithLifecycle()
+    val windNoiseReduction by viewModel.windNoiseReduction.collectAsStateWithLifecycle()
+    val audioSource by viewModel.audioSource.collectAsStateWithLifecycle()
+    val horizonLeveler by viewModel.horizonLeveler.collectAsStateWithLifecycle()
+    val viewfinderFps by viewModel.viewfinderFps.collectAsStateWithLifecycle()
+    val thermalProtection by viewModel.thermalProtection.collectAsStateWithLifecycle()
+    val isAutoHdrEnabled by viewModel.isAutoHdrEnabled.collectAsStateWithLifecycle()
+    val isAiAutoFramingEnabled by viewModel.isAiAutoFramingEnabled.collectAsStateWithLifecycle()
+
     if (cameraMode == CameraMode.AI_SUBJECT_TRACKING) {
         com.example.camera.tracking.ui.AiSubjectTrackingScreen(
             onBack = {
@@ -271,6 +285,21 @@ fun CameraScreen(
                 modifier = Modifier.fillMaxSize()
             )
         }
+
+        // 1f. Real-Time Viewfinder HUD & Telemetry specific to the active UI Template
+        ViewfinderHudOverlay(
+            templateType = uiCustomizationState.selectedTemplate,
+            cameraMode = cameraMode,
+            exposureCompensation = exposureCompensation,
+            onExposureChange = { viewModel.setExposureCompensation(it) },
+            currentZoom = currentZoom,
+            onZoomChange = { viewModel.setZoom(it, isPresetTap = false) },
+            manualIso = manualIso,
+            manualShutterSpeedNs = manualShutterSpeedNs,
+            storageStats = storageStats,
+            capabilities = capabilities,
+            modifier = Modifier.fillMaxSize()
+        )
 
         // 2. Top Controls
         TopControlBar(
@@ -575,13 +604,15 @@ fun CameraScreen(
                 }
             },
             onCinemaModeClick = { viewModel.toggleCinemaSettings() },
+            onSettingsClick = { viewModel.setSettingsOpen(true) },
+            onTimerClick = { viewModel.cycleTimerMode() },
             layoutConfig = activeLayoutConfig.copy(
                 showZoomCapsule = activeLayoutConfig.showZoomCapsule && !isAnyWindowOpen
             ),
             modifier = Modifier.align(Alignment.BottomCenter)
         )
 
-        // 6. Settings Bottom Sheet (Light Mode, Categorized)
+        // 6. Settings Bottom Sheet (Light Mode, Categorized 19 Categories)
         SettingsDrawer(
             isOpen = isSettingsOpen,
             cameraMode = cameraMode,
@@ -604,6 +635,52 @@ fun CameraScreen(
             hybridStabilizationConfig = hybridStabilizationConfig,
             nightConfig = nightConfig,
             tapFocusConfig = tapFocusConfig,
+            // Extended Settings States
+            videoCodec = videoCodec,
+            jpegQuality = jpegQuality,
+            volumeKeyAction = volumeKeyAction,
+            doubleTapAction = doubleTapAction,
+            shutterFeedback = shutterFeedback,
+            antibandingMode = antibandingMode,
+            windNoiseReduction = windNoiseReduction,
+            audioSource = audioSource,
+            horizonLeveler = horizonLeveler,
+            viewfinderFps = viewfinderFps,
+            thermalProtection = thermalProtection,
+            isAutoHdrEnabled = isAutoHdrEnabled,
+            isAiAutoFramingEnabled = isAiAutoFramingEnabled,
+            currentZoom = currentZoom,
+            exposureCompensation = exposureCompensation,
+            manualIso = manualIso,
+            manualShutterSpeedNs = manualShutterSpeedNs,
+            focusMode = focusMode,
+            manualFocusDistance = manualFocusDistance,
+            portraitConfig = portraitConfig,
+            selectedPhotoFilter = selectedPhotoFilter,
+            // Extended Callbacks
+            onVideoCodecSelected = { viewModel.setVideoCodec(it) },
+            onJpegQualitySelected = { viewModel.setJpegQuality(it) },
+            onVolumeKeyActionSelected = { viewModel.setVolumeKeyAction(it) },
+            onDoubleTapActionSelected = { viewModel.setDoubleTapAction(it) },
+            onShutterFeedbackSelected = { viewModel.setShutterFeedback(it) },
+            onAntibandingModeSelected = { viewModel.setAntibandingMode(it) },
+            onWindNoiseReductionToggle = { viewModel.setWindNoiseReduction(it) },
+            onAudioSourceSelected = { viewModel.setAudioSource(it) },
+            onHorizonLevelerToggle = { viewModel.setHorizonLeveler(it) },
+            onViewfinderFpsSelected = { viewModel.setViewfinderFps(it) },
+            onThermalProtectionToggle = { viewModel.setThermalProtection(it) },
+            onAutoHdrToggle = { viewModel.setAutoHdrEnabled(it) },
+            onAiAutoFramingToggle = { viewModel.setAiAutoFramingEnabled(it) },
+            onZoomChange = { viewModel.setZoom(it, isPresetTap = false) },
+            onExposureCompensationChange = { viewModel.setExposureCompensation(it) },
+            onManualIsoChange = { viewModel.setManualIso(it) },
+            onManualShutterSpeedChange = { viewModel.setManualShutterSpeed(it) },
+            onFocusModeChange = { viewModel.setFocusMode(it) },
+            onManualFocusDistanceChange = { viewModel.setManualFocusDistance(it) },
+            onPortraitConfigChange = { viewModel.setPortraitConfig(it) },
+            onPhotoFilterSelected = { viewModel.setPhotoFilter(it) },
+            onResetAllSettings = { viewModel.resetAllSettings() },
+            // UI Customization callbacks
             uiCustomizationState = uiCustomizationState,
             onSelectTemplate = { viewModel.selectUiTemplate(it) },
             onUpdateGlobalLayoutConfig = { viewModel.updateGlobalLayoutConfig(it) },

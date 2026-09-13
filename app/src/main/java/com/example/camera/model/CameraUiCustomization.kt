@@ -10,6 +10,11 @@ enum class UiTemplateType(
     val subtitle: String,
     val accentHex: String
 ) {
+    STOCK_PIXEL("Stock Pixel Camera", "Google Pixel layout with dual exposure slider, zoom pill & bottom switch dock", "#8AB4F8"),
+    MINIMAL_PRO("Minimal Pro / Leica", "Monochrome precision layout with live EV telemetry, exposure dial & red dot trigger", "#E53935"),
+    FUTURISTIC_GLASS("Cyber Glass HUD", "Frosted glowing glass pods, cyber brackets, digital gyro & holographic ring", "#00E5FF"),
+    DSLR_PRO("DSLR Mirrorless", "Pro camera OLED info band, tactical ISO/WB micro-dials & knurled metal shutter", "#FFB300"),
+    IMMERSIVE_EDGE("Immersive Edge-Control", "Ultra-clean full-screen preview with dual edge sliders & floating thumb shutter", "#69F0AE"),
     IPHONE("iPhone Style", "Clean, minimal Apple-inspired layout with yellow accents & top pill indicators", "#FFD54F"),
     SAMSUNG("Samsung Style", "One UI layout with bold toggles, capsule mode selector & solid shutter", "#FFFFFF"),
     VIVO("Vivo Style", "OriginOS/Funtouch camera layout with circular icons, gimbal cues & vivid shutter ring", "#FF7043"),
@@ -21,7 +26,11 @@ enum class ShutterStyle(val label: String, val description: String) {
     APPLE_DOT("Apple Minimal", "Thin silver ring with crisp inner circle"),
     SAMSUNG_CAPSULE("Samsung OneUI", "Thick outer border with solid round core"),
     VIVO_GIMBAL("Vivo Origin", "Accent colored outer ring with responsive gimbal core"),
-    MINIMAL_ACCENT("Minimalist Accent", "Flat borderless tactile trigger")
+    MINIMAL_ACCENT("Minimalist Accent", "Flat borderless tactile trigger"),
+    PIXEL_SOLID("Pixel Shutter", "Google Pixel concentric ring with clean solid core"),
+    LEICA_RED_DOT("Leica Red Dot", "Minimalist circular brushed aluminum with central red dot"),
+    CYBER_HOLO("Cyber Hologram", "Futuristic neon glowing dual-pulse rings"),
+    DSLR_KNURLED("DSLR Knurled Metal", "Tactile textured mechanical trigger")
 }
 
 enum class ModeSelectorPosition(val label: String) {
@@ -33,7 +42,11 @@ enum class ModeSelectorStyle(val label: String) {
     CLASSIC_DOT("Yellow Indicator Dot"),
     CAPSULE_PILL("OneUI Capsule Pill"),
     UNDERLINE("Vivo Accent Underline"),
-    MINIMAL_TEXT("Minimal Typography")
+    MINIMAL_TEXT("Minimal Typography"),
+    PIXEL_PILL("Pixel Dark Pill"),
+    MONO_TICKER("Pro Monospace Ticker"),
+    CYBER_GLOW("Cyber Neon Glow"),
+    DSLR_DIAL("Mechanical Dial Wheel")
 }
 
 enum class FontFamilyOption(val label: String) {
@@ -229,8 +242,8 @@ data class ModeLayoutConfig(
 }
 
 data class UiCustomizationState(
-    val selectedTemplate: UiTemplateType = UiTemplateType.IPHONE,
-    val globalConfig: ModeLayoutConfig = CameraUiTemplates.getTemplateConfig(UiTemplateType.IPHONE),
+    val selectedTemplate: UiTemplateType = UiTemplateType.STOCK_PIXEL,
+    val globalConfig: ModeLayoutConfig = CameraUiTemplates.getTemplateConfig(UiTemplateType.STOCK_PIXEL),
     val modeSpecificConfigs: Map<CameraMode, ModeLayoutConfig> = emptyMap(),
     val customPresets: List<CustomUiPreset> = emptyList()
 ) {
@@ -272,8 +285,8 @@ data class UiCustomizationState(
             return try {
                 val root = JSONObject(jsonStr)
                 val template = try {
-                    UiTemplateType.valueOf(root.optString("selectedTemplate", UiTemplateType.IPHONE.name))
-                } catch (e: Exception) { UiTemplateType.IPHONE }
+                    UiTemplateType.valueOf(root.optString("selectedTemplate", UiTemplateType.STOCK_PIXEL.name))
+                } catch (e: Exception) { UiTemplateType.STOCK_PIXEL }
 
                 val gConfig = root.optJSONObject("globalConfig")?.let { ModeLayoutConfig.fromJson(it) }
                     ?: CameraUiTemplates.getTemplateConfig(template)
@@ -331,6 +344,106 @@ data class CustomUiPreset(
 object CameraUiTemplates {
     fun getTemplateConfig(type: UiTemplateType): ModeLayoutConfig {
         return when (type) {
+            UiTemplateType.STOCK_PIXEL -> ModeLayoutConfig(
+                modeSelectorPosition = ModeSelectorPosition.BELOW_SHUTTER,
+                modeSelectorStyle = ModeSelectorStyle.PIXEL_PILL,
+                shutterStyle = ShutterStyle.PIXEL_SOLID,
+                shutterSizeDp = 84,
+                shutterHorizontalOffsetDp = 0,
+                flipButtonSizeDp = 54,
+                galleryThumbSizeDp = 54,
+                topControlsIconSizeDp = 22,
+                topControlsSpacingDp = 18,
+                topBarAlignment = TopBarAlignment.SPACE_BETWEEN,
+                accentColorHex = "#8AB4F8",
+                modeTextSizeSp = 13.0f,
+                modeFontFamily = FontFamilyOption.ROUNDED,
+                topPaddingDp = 10,
+                bottomPaddingDp = 10,
+                showZoomCapsule = true,
+                zoomCapsuleScale = 1.0f,
+                zoomCapsuleVerticalOffsetDp = 0
+            )
+            UiTemplateType.MINIMAL_PRO -> ModeLayoutConfig(
+                modeSelectorPosition = ModeSelectorPosition.ABOVE_SHUTTER,
+                modeSelectorStyle = ModeSelectorStyle.MONO_TICKER,
+                shutterStyle = ShutterStyle.LEICA_RED_DOT,
+                shutterSizeDp = 76,
+                shutterHorizontalOffsetDp = 0,
+                flipButtonSizeDp = 48,
+                galleryThumbSizeDp = 48,
+                topControlsIconSizeDp = 20,
+                topControlsSpacingDp = 16,
+                topBarAlignment = TopBarAlignment.SPACE_BETWEEN,
+                accentColorHex = "#E53935",
+                modeTextSizeSp = 12.0f,
+                modeFontFamily = FontFamilyOption.MONOSPACE,
+                topPaddingDp = 8,
+                bottomPaddingDp = 12,
+                showZoomCapsule = true,
+                zoomCapsuleScale = 0.92f,
+                zoomCapsuleVerticalOffsetDp = 4
+            )
+            UiTemplateType.FUTURISTIC_GLASS -> ModeLayoutConfig(
+                modeSelectorPosition = ModeSelectorPosition.ABOVE_SHUTTER,
+                modeSelectorStyle = ModeSelectorStyle.CYBER_GLOW,
+                shutterStyle = ShutterStyle.CYBER_HOLO,
+                shutterSizeDp = 86,
+                shutterHorizontalOffsetDp = 0,
+                flipButtonSizeDp = 56,
+                galleryThumbSizeDp = 56,
+                topControlsIconSizeDp = 24,
+                topControlsSpacingDp = 20,
+                topBarAlignment = TopBarAlignment.SPACE_BETWEEN,
+                accentColorHex = "#00E5FF",
+                modeTextSizeSp = 13.5f,
+                modeFontFamily = FontFamilyOption.MONOSPACE,
+                topPaddingDp = 12,
+                bottomPaddingDp = 14,
+                showZoomCapsule = true,
+                zoomCapsuleScale = 1.05f,
+                zoomCapsuleVerticalOffsetDp = -2
+            )
+            UiTemplateType.DSLR_PRO -> ModeLayoutConfig(
+                modeSelectorPosition = ModeSelectorPosition.ABOVE_SHUTTER,
+                modeSelectorStyle = ModeSelectorStyle.DSLR_DIAL,
+                shutterStyle = ShutterStyle.DSLR_KNURLED,
+                shutterSizeDp = 88,
+                shutterHorizontalOffsetDp = 0,
+                flipButtonSizeDp = 54,
+                galleryThumbSizeDp = 54,
+                topControlsIconSizeDp = 22,
+                topControlsSpacingDp = 14,
+                topBarAlignment = TopBarAlignment.SPACE_BETWEEN,
+                accentColorHex = "#FFB300",
+                modeTextSizeSp = 12.5f,
+                modeFontFamily = FontFamilyOption.MONOSPACE,
+                topPaddingDp = 8,
+                bottomPaddingDp = 16,
+                showZoomCapsule = true,
+                zoomCapsuleScale = 0.95f,
+                zoomCapsuleVerticalOffsetDp = 0
+            )
+            UiTemplateType.IMMERSIVE_EDGE -> ModeLayoutConfig(
+                modeSelectorPosition = ModeSelectorPosition.BELOW_SHUTTER,
+                modeSelectorStyle = ModeSelectorStyle.MINIMAL_TEXT,
+                shutterStyle = ShutterStyle.MINIMAL_ACCENT,
+                shutterSizeDp = 78,
+                shutterHorizontalOffsetDp = 0,
+                flipButtonSizeDp = 48,
+                galleryThumbSizeDp = 48,
+                topControlsIconSizeDp = 20,
+                topControlsSpacingDp = 16,
+                topBarAlignment = TopBarAlignment.SPACE_BETWEEN,
+                accentColorHex = "#69F0AE",
+                modeTextSizeSp = 12.5f,
+                modeFontFamily = FontFamilyOption.ROUNDED,
+                topPaddingDp = 6,
+                bottomPaddingDp = 8,
+                showZoomCapsule = false,
+                zoomCapsuleScale = 1.0f,
+                zoomCapsuleVerticalOffsetDp = 0
+            )
             UiTemplateType.IPHONE -> ModeLayoutConfig(
                 modeSelectorPosition = ModeSelectorPosition.ABOVE_SHUTTER,
                 modeSelectorStyle = ModeSelectorStyle.CLASSIC_DOT,

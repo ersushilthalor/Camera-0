@@ -123,6 +123,11 @@ fun CameraUiCustomizationView(
                         contentAlignment = Alignment.Center
                     ) {
                         val icon = when (template) {
+                            UiTemplateType.STOCK_PIXEL -> Icons.Outlined.PhotoCamera
+                            UiTemplateType.MINIMAL_PRO -> Icons.Outlined.CenterFocusStrong
+                            UiTemplateType.FUTURISTIC_GLASS -> Icons.Outlined.AutoAwesome
+                            UiTemplateType.DSLR_PRO -> Icons.Outlined.CameraAlt
+                            UiTemplateType.IMMERSIVE_EDGE -> Icons.Outlined.Fullscreen
                             UiTemplateType.IPHONE -> Icons.Outlined.PhoneIphone
                             UiTemplateType.SAMSUNG -> Icons.Outlined.PhoneAndroid
                             UiTemplateType.VIVO -> Icons.Outlined.Camera
@@ -818,6 +823,74 @@ fun PreviewShutterButton(config: ModeLayoutConfig, accentColor: Color) {
                     .background(accentColor)
             )
         }
+        ShutterStyle.PIXEL_SOLID -> {
+            Box(
+                modifier = Modifier
+                    .size(sizeDp)
+                    .clip(CircleShape)
+                    .border(3.5.dp, Color.White, CircleShape)
+                    .padding(3.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(sizeDp * 0.78f)
+                        .clip(CircleShape)
+                        .background(Color.White)
+                )
+            }
+        }
+        ShutterStyle.LEICA_RED_DOT -> {
+            Box(
+                modifier = Modifier
+                    .size(sizeDp)
+                    .clip(CircleShape)
+                    .border(2.5.dp, Color(0xFFE0E0E0), CircleShape)
+                    .padding(3.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(sizeDp * 0.75f)
+                        .clip(CircleShape)
+                        .background(Color(0xFFE53935))
+                )
+            }
+        }
+        ShutterStyle.CYBER_HOLO -> {
+            Box(
+                modifier = Modifier
+                    .size(sizeDp)
+                    .clip(CircleShape)
+                    .border(2.dp, Color(0xFF00E5FF), CircleShape)
+                    .padding(3.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(sizeDp * 0.75f)
+                        .clip(CircleShape)
+                        .background(Color(0xFF00E5FF))
+                )
+            }
+        }
+        ShutterStyle.DSLR_KNURLED -> {
+            Box(
+                modifier = Modifier
+                    .size(sizeDp)
+                    .clip(CircleShape)
+                    .border(4.dp, Color(0xFF555555), CircleShape)
+                    .padding(2.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(sizeDp * 0.8f)
+                        .clip(CircleShape)
+                        .background(Color(0xFFD5D5D5))
+                )
+            }
+        }
     }
 }
 
@@ -901,6 +974,60 @@ fun PreviewModeCarousel(
                             fontWeight = if (isSelected) FontWeight.ExtraBold else FontWeight.Normal,
                             fontFamily = fontFamily
                         )
+                    }
+                    ModeSelectorStyle.PIXEL_PILL -> {
+                        Surface(
+                            shape = RoundedCornerShape(16.dp),
+                            color = if (isSelected) Color(0x44FFFFFF) else Color.Transparent
+                        ) {
+                            Text(
+                                text = mode.name,
+                                color = if (isSelected) Color.White else Color.White.copy(alpha = 0.6f),
+                                fontSize = config.modeTextSizeSp.sp,
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                fontFamily = fontFamily,
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                            )
+                        }
+                    }
+                    ModeSelectorStyle.MONO_TICKER -> {
+                        Text(
+                            text = mode.name,
+                            color = if (isSelected) Color(0xFFE53935) else Color.White.copy(alpha = 0.5f),
+                            fontSize = config.modeTextSizeSp.sp,
+                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+                        )
+                    }
+                    ModeSelectorStyle.CYBER_GLOW -> {
+                        Surface(
+                            shape = RoundedCornerShape(6.dp),
+                            color = if (isSelected) Color(0x3300E5FF) else Color.Transparent
+                        ) {
+                            Text(
+                                text = mode.name,
+                                color = if (isSelected) Color(0xFF00E5FF) else Color.White.copy(alpha = 0.6f),
+                                fontSize = config.modeTextSizeSp.sp,
+                                fontWeight = FontWeight.Bold,
+                                fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                            )
+                        }
+                    }
+                    ModeSelectorStyle.DSLR_DIAL -> {
+                        Surface(
+                            shape = RoundedCornerShape(4.dp),
+                            color = if (isSelected) Color(0xFF262C36) else Color.Transparent
+                        ) {
+                            Text(
+                                text = mode.name,
+                                color = if (isSelected) Color(0xFFFFB300) else Color.Gray,
+                                fontSize = config.modeTextSizeSp.sp,
+                                fontWeight = FontWeight.Bold,
+                                fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                            )
+                        }
                     }
                 }
             }

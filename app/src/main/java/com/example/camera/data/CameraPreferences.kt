@@ -477,4 +477,57 @@ class CameraPreferences(context: Context) {
         set(value) {
             prefs.edit().putString("pref_ui_customization_state", value.toJson()).apply()
         }
+
+    // Extended Camera Controls & System Preferences
+    var videoCodec: String
+        get() = prefs.getString("pref_video_codec", "HEVC") ?: "HEVC"
+        set(value) = prefs.edit().putString("pref_video_codec", value).apply()
+
+    var jpegQuality: Int
+        get() = prefs.getInt("pref_jpeg_quality", 100)
+        set(value) = prefs.edit().putInt("pref_jpeg_quality", value).apply()
+
+    var volumeKeyAction: String
+        get() = prefs.getString("pref_volume_key_action", "SHUTTER") ?: "SHUTTER"
+        set(value) = prefs.edit().putString("pref_volume_key_action", value).apply()
+
+    var doubleTapAction: String
+        get() = prefs.getString("pref_double_tap_action", "FLIP_CAMERA") ?: "FLIP_CAMERA"
+        set(value) = prefs.edit().putString("pref_double_tap_action", value).apply()
+
+    var showHorizonLevel: Boolean
+        get() = prefs.getBoolean("pref_show_horizon_level", true)
+        set(value) = prefs.edit().putBoolean("pref_show_horizon_level", value).apply()
+
+    var antiBanding: String
+        get() = prefs.getString("pref_anti_banding", "AUTO") ?: "AUTO"
+        set(value) = prefs.edit().putString("pref_anti_banding", value).apply()
+
+    var zoomSpeed: String
+        get() = prefs.getString("pref_zoom_speed", "SMOOTH") ?: "SMOOTH"
+        set(value) = prefs.edit().putString("pref_zoom_speed", value).apply()
+
+    var audioSource: String
+        get() = prefs.getString("pref_audio_source", "STEREO") ?: "STEREO"
+        set(value) = prefs.edit().putString("pref_audio_source", value).apply()
+
+    var previewQuality: String
+        get() = prefs.getString("pref_preview_quality", "HIGH_60FPS") ?: "HIGH_60FPS"
+        set(value) = prefs.edit().putString("pref_preview_quality", value).apply()
+
+    var shutterFeedback: String
+        get() = prefs.getString("pref_shutter_feedback", "SOUND_HAPTIC") ?: "SOUND_HAPTIC"
+        set(value) = prefs.edit().putString("pref_shutter_feedback", value).apply()
+
+    var autoHdrEnabled: Boolean
+        get() = prefs.getBoolean("pref_auto_hdr_enabled", true)
+        set(value) = prefs.edit().putBoolean("pref_auto_hdr_enabled", value).apply()
+
+    var autoFramingEnabled: Boolean
+        get() = prefs.getBoolean("pref_auto_framing_enabled", true)
+        set(value) = prefs.edit().putBoolean("pref_auto_framing_enabled", value).apply()
+
+    fun resetAllSettingsToDefaults() {
+        prefs.edit().clear().apply()
+    }
 }

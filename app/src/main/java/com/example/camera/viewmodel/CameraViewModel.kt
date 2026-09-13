@@ -1049,6 +1049,189 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         showToast("Reset all layouts to ${template.title}")
     }
 
+    // Extended Settings & Features State
+    private val _videoCodec = MutableStateFlow(preferences.videoCodec)
+    val videoCodec: StateFlow<String> = _videoCodec.asStateFlow()
+
+    fun setVideoCodec(codec: String) {
+        _videoCodec.value = codec
+        preferences.videoCodec = codec
+        showToast("Video Codec: $codec")
+    }
+
+    private val _jpegQuality = MutableStateFlow(preferences.jpegQuality)
+    val jpegQuality: StateFlow<Int> = _jpegQuality.asStateFlow()
+
+    fun setJpegQuality(quality: Int) {
+        _jpegQuality.value = quality
+        preferences.jpegQuality = quality
+        showToast("JPEG Quality: $quality%")
+    }
+
+    private val _volumeKeyAction = MutableStateFlow(preferences.volumeKeyAction)
+    val volumeKeyAction: StateFlow<String> = _volumeKeyAction.asStateFlow()
+
+    fun setVolumeKeyAction(action: String) {
+        _volumeKeyAction.value = action
+        preferences.volumeKeyAction = action
+        showToast("Volume key set to: $action")
+    }
+
+    private val _doubleTapAction = MutableStateFlow(preferences.doubleTapAction)
+    val doubleTapAction: StateFlow<String> = _doubleTapAction.asStateFlow()
+
+    fun setDoubleTapAction(action: String) {
+        _doubleTapAction.value = action
+        preferences.doubleTapAction = action
+        showToast("Double-tap set to: $action")
+    }
+
+    private val _showHorizonLevel = MutableStateFlow(preferences.showHorizonLevel)
+    val showHorizonLevel: StateFlow<Boolean> = _showHorizonLevel.asStateFlow()
+
+    fun setShowHorizonLevel(show: Boolean) {
+        _showHorizonLevel.value = show
+        preferences.showHorizonLevel = show
+    }
+
+    private val _antiBanding = MutableStateFlow(preferences.antiBanding)
+    val antiBanding: StateFlow<String> = _antiBanding.asStateFlow()
+
+    fun setAntiBanding(mode: String) {
+        _antiBanding.value = mode
+        preferences.antiBanding = mode
+        showToast("Anti-banding: $mode")
+    }
+
+    private val _zoomSpeed = MutableStateFlow(preferences.zoomSpeed)
+    val zoomSpeed: StateFlow<String> = _zoomSpeed.asStateFlow()
+
+    fun setZoomSpeed(speed: String) {
+        _zoomSpeed.value = speed
+        preferences.zoomSpeed = speed
+    }
+
+    private val _audioSource = MutableStateFlow(preferences.audioSource)
+    val audioSource: StateFlow<String> = _audioSource.asStateFlow()
+
+    fun setAudioSource(source: String) {
+        _audioSource.value = source
+        preferences.audioSource = source
+        showToast("Audio source: $source")
+    }
+
+    private val _previewQuality = MutableStateFlow(preferences.previewQuality)
+    val previewQuality: StateFlow<String> = _previewQuality.asStateFlow()
+
+    fun setPreviewQuality(quality: String) {
+        _previewQuality.value = quality
+        preferences.previewQuality = quality
+        showToast("Preview Quality: $quality")
+    }
+
+    private val _shutterFeedback = MutableStateFlow(preferences.shutterFeedback)
+    val shutterFeedback: StateFlow<String> = _shutterFeedback.asStateFlow()
+
+    fun setShutterFeedback(feedback: String) {
+        _shutterFeedback.value = feedback
+        preferences.shutterFeedback = feedback
+    }
+
+    val antibandingMode: StateFlow<String> = _antiBanding.asStateFlow()
+    fun setAntibandingMode(mode: String) = setAntiBanding(mode)
+
+    private val _windNoiseReduction = MutableStateFlow(true)
+    val windNoiseReduction: StateFlow<Boolean> = _windNoiseReduction.asStateFlow()
+    fun setWindNoiseReduction(enabled: Boolean) {
+        _windNoiseReduction.value = enabled
+        showToast("Wind Noise Reduction: " + if (enabled) "On" else "Off")
+    }
+
+    val horizonLeveler: StateFlow<Boolean> = _showHorizonLevel.asStateFlow()
+    fun setHorizonLeveler(show: Boolean) = setShowHorizonLevel(show)
+
+    private val _viewfinderFps = MutableStateFlow(60)
+    val viewfinderFps: StateFlow<Int> = _viewfinderFps.asStateFlow()
+    fun setViewfinderFps(fps: Int) {
+        _viewfinderFps.value = fps
+        showToast("Viewfinder: $fps FPS")
+    }
+
+    private val _thermalProtection = MutableStateFlow(true)
+    val thermalProtection: StateFlow<Boolean> = _thermalProtection.asStateFlow()
+    fun setThermalProtection(enabled: Boolean) {
+        _thermalProtection.value = enabled
+        showToast("Thermal Protection: " + if (enabled) "Adaptive" else "Off")
+    }
+
+    private val _autoHdrEnabled = MutableStateFlow(preferences.autoHdrEnabled)
+    val autoHdrEnabled: StateFlow<Boolean> = _autoHdrEnabled.asStateFlow()
+    val isAutoHdrEnabled: StateFlow<Boolean> = _autoHdrEnabled.asStateFlow()
+
+    fun setAutoHdrEnabled(enabled: Boolean) {
+        _autoHdrEnabled.value = enabled
+        preferences.autoHdrEnabled = enabled
+        showToast(if (enabled) "Auto HDR Enabled" else "Auto HDR Disabled")
+    }
+
+    private val _autoFramingEnabled = MutableStateFlow(preferences.autoFramingEnabled)
+    val autoFramingEnabled: StateFlow<Boolean> = _autoFramingEnabled.asStateFlow()
+    val isAiAutoFramingEnabled: StateFlow<Boolean> = _autoFramingEnabled.asStateFlow()
+
+    fun setAutoFramingEnabled(enabled: Boolean) {
+        _autoFramingEnabled.value = enabled
+        preferences.autoFramingEnabled = enabled
+        showToast(if (enabled) "AI Auto-Framing On" else "AI Auto-Framing Off")
+    }
+
+    fun setAiAutoFramingEnabled(enabled: Boolean) = setAutoFramingEnabled(enabled)
+
+    fun setPortraitConfig(config: PortraitConfig) {
+        _portraitConfig.value = config
+        preferences.portraitBlurStrength = config.blurStrength
+        preferences.portraitAperture = config.simulatedAperture
+    }
+
+    fun setPhotoFilter(filter: PhotoFilter) {
+        _selectedPhotoFilter.value = filter
+        showToast("Filter: ${filter.displayName}")
+    }
+
+    fun setManualShutterSpeed(ns: Long?) {
+        setManualShutterSpeedNs(ns)
+    }
+
+    fun setFlashMode(mode: FlashMode) {
+        _flashMode.value = mode
+        preferences.flashMode = mode
+        engine.flashMode = mode
+        engine.updatePreviewSettings()
+    }
+
+    fun setTimerMode(mode: TimerMode) {
+        _timerMode.value = mode
+        preferences.timerMode = mode
+    }
+
+    fun resetAllSettings() {
+        resetAllSettingsToDefaults()
+    }
+
+    fun resetAllSettingsToDefaults() {
+        preferences.resetAllSettingsToDefaults()
+        selectUiTemplate(UiTemplateType.STOCK_PIXEL)
+        setCameraMode(CameraMode.PHOTO)
+        setGridType(GridType.NONE)
+        setFlashMode(FlashMode.OFF)
+        setTimerMode(TimerMode.OFF)
+        _videoCodec.value = "HEVC"
+        _jpegQuality.value = 100
+        _showHorizonLevel.value = true
+        _autoHdrEnabled.value = true
+        _autoFramingEnabled.value = true
+        showToast("All settings reset to defaults")
+    }
+
     fun showToast(message: String) {
         _toastMessage.value = message
         toastDismissJob?.cancel()
