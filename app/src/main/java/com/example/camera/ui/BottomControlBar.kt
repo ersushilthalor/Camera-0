@@ -292,7 +292,7 @@ fun BottomControlBar(
                                         )
                                     }
                                 }
-                                CameraMode.VIDEO, CameraMode.CINEMA, CameraMode.DOLLY_ZOOM, CameraMode.DUAL_VIDEO -> {
+                                CameraMode.VIDEO, CameraMode.CINEMA, CameraMode.DOLLY_ZOOM -> {
                                     if (isRecordingVideo) {
                                         Box(
                                             modifier = Modifier

@@ -86,8 +86,7 @@ fun Viewfinder(
 
         val isVideoLayout = (cameraMode == CameraMode.VIDEO ||
                 cameraMode == CameraMode.CINEMA ||
-                cameraMode == CameraMode.DOLLY_ZOOM ||
-                cameraMode == CameraMode.DUAL_VIDEO)
+                cameraMode == CameraMode.DOLLY_ZOOM)
 
         // Calculate layout geometry:
         // In Video and Cinema modes, viewfinder extends vertically down towards shutter clearance
@@ -101,7 +100,7 @@ fun Viewfinder(
 
         // Expected aspect ratio for current mode (portrait display: height / width)
         val targetModeRatio = when (cameraMode) {
-            CameraMode.VIDEO, CameraMode.CINEMA, CameraMode.DOLLY_ZOOM, CameraMode.DUAL_VIDEO -> {
+            CameraMode.VIDEO, CameraMode.CINEMA, CameraMode.DOLLY_ZOOM -> {
                 if (aspectRatio > 1.4f) aspectRatio else (16f / 9f)
             }
             CameraMode.PHOTO, CameraMode.PORTRAIT, CameraMode.NIGHT, CameraMode.MORE -> {

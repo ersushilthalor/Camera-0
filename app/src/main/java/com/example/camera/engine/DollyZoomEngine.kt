@@ -1,6 +1,7 @@
 package com.example.camera.engine
 
 import android.graphics.Rect
+import android.graphics.RectF
 import android.hardware.camera2.CaptureResult
 import android.hardware.camera2.params.Face
 import com.example.camera.model.DollyDirection
@@ -10,6 +11,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlin.math.abs
 import kotlin.math.max
+import kotlin.math.min
 
 /**
  * Real Dolly Zoom (Vertigo Effect) Computation Engine.
@@ -19,42 +21,59 @@ import kotlin.math.max
  * expands (push-in) or compresses (pull-out).
  *
  * Incorporates:
- * - Robust dual-source tracking (Subject Face Geometry + Optical Lens Distance)
+ * - User tap-to-lock on subject (face or arbitrary focal region)
+ * - Real-time apparent size calculation and bounding reticle
+ * - Predictive zoom compensation anticipating motion delta
  * - Multi-stage Low-Pass Filtering to eliminate sensor noise & focus jumps
- * - Strict Slew-Rate Limiting to guarantee continuous, silky-smooth zoom without sudden jumps
- * - Continuous boundary handling so it never freezes, stops, or locks up at zoom limits
+ * - Strict Slew-Rate Limiting for buttery-smooth performance
  */
 class DollyZoomEngine {
 
     companion object {
-        private const val MAX_ZOOM_SLEW_PER_FRAME = 0.04f // Silky smooth ~1.2x change per second at 30fps
-        private const val DISTANCE_FILTER_ALPHA = 0.10f
-        private const val SCALE_FILTER_ALPHA = 0.14f
+        private const val MAX_ZOOM_SLEW_PER_FRAME = 0.045f // Smooth ~1.35x change per second at 30fps
+        private const val DISTANCE_FILTER_ALPHA = 0.12f
+        private const val SCALE_FILTER_ALPHA = 0.16f
+        private const val PREDICTIVE_LOOKAHEAD_FRAMES = 2.0f // Anticipate 2 frames ahead (~66ms)
     }
 
     private val _dollyState = MutableStateFlow(DollyZoomState())
     val dollyState: StateFlow<DollyZoomState> = _dollyState.asStateFlow()
 
-    // Calibration references
+    // Tracking state
     private var isFaceLocked: Boolean = false
-    private var referenceSubjectScale: Float = 0f
-    private var filteredSubjectScale: Float = 0f
+    private var lockedFaceId: Int = -1
+    private var lockedNormX: Float = 0.5f
+    private var lockedNormY: Float = 0.5f
+
+    // Scale & Distance Baselines
+    private var referenceSubjectScale: Float = 0.25f
+    private var filteredSubjectScale: Float = 0.25f
+    private var prevFilteredScale: Float = 0.25f
+    private var scaleVelocity: Float = 0f
+
     private var referenceDistanceMeters: Float = 1.2f
     private var filteredDistanceMeters: Float = 1.2f
+    private var prevFilteredDistance: Float = 1.2f
+    private var distanceVelocity: Float = 0f
+
     private var referenceZoom: Float = 1.0f
     private var currentSmoothedZoom: Float = 1.0f
     private var targetZoomClamped: Float = 1.0f
     private var smoothedTrackingRatio: Float = 1.0f
 
-    // Missed frame bridge for face tracking
-    private var missedFaceFrames: Int = 0
+    // Missed frame bridge
+    private var missedFrames: Int = 0
 
     /**
-     * Locks and calibrates on current subject scale and distance as baseline.
+     * Locks on subject at the specified normalized viewfinder coordinates (normX, normY: 0..1).
+     * If a face intersects or is near the tap point, it locks to that face.
+     * Otherwise, locks to the region centered at (normX, normY).
      */
-    fun calibrate(
+    fun lockSubject(
+        normX: Float,
+        normY: Float,
         currentZoom: Float,
-        currentFace: Face?,
+        faces: Array<Face>?,
         lensFocusDiopters: Float,
         sensorRect: Rect?,
         minZoom: Float = 1.0f,
@@ -66,6 +85,9 @@ class DollyZoomEngine {
         targetZoomClamped = clampedZoom
         smoothedTrackingRatio = 1.0f
 
+        lockedNormX = normX.coerceIn(0.05f, 0.95f)
+        lockedNormY = normY.coerceIn(0.05f, 0.95f)
+
         val rawDist = if (lensFocusDiopters > 0.01f) {
             (1.0f / lensFocusDiopters).coerceIn(0.25f, 12.0f)
         } else {
@@ -73,29 +95,104 @@ class DollyZoomEngine {
         }
         referenceDistanceMeters = rawDist
         filteredDistanceMeters = rawDist
+        prevFilteredDistance = rawDist
+        distanceVelocity = 0f
 
-        if (currentFace != null && sensorRect != null && sensorRect.width() > 0) {
-            isFaceLocked = true
-            val initialScale = currentFace.bounds.width().toFloat() / sensorRect.width().toFloat()
-            referenceSubjectScale = initialScale.coerceIn(0.04f, 0.90f)
-            filteredSubjectScale = referenceSubjectScale
-        } else {
-            isFaceLocked = false
-            referenceSubjectScale = 0.25f
-            filteredSubjectScale = 0.25f
+        // Check if any detected face is close to the tap coordinates
+        var matchedFace: Face? = null
+        if (sensorRect != null && sensorRect.width() > 0 && faces != null && faces.isNotEmpty()) {
+            val sensorW = sensorRect.width().toFloat()
+            val sensorH = sensorRect.height().toFloat()
+
+            for (face in faces) {
+                // Approximate face bounds in normalized 0..1 coordinates
+                val faceNormCenterX = (face.bounds.centerX() - sensorRect.left) / sensorW
+                val faceNormCenterY = (face.bounds.centerY() - sensorRect.top) / sensorH
+                val dist = abs(faceNormCenterX - lockedNormX) + abs(faceNormCenterY - lockedNormY)
+                if (dist < 0.35f) {
+                    matchedFace = face
+                    break
+                }
+            }
+            if (matchedFace == null && faces.isNotEmpty()) {
+                // If user tapped in general area, pick nearest or primary face
+                matchedFace = faces.first()
+            }
         }
 
-        missedFaceFrames = 0
+        var bounds: RectF
+        if (matchedFace != null && sensorRect != null && sensorRect.width() > 0) {
+            isFaceLocked = true
+            lockedFaceId = matchedFace.id
+            val initialScale = matchedFace.bounds.width().toFloat() / sensorRect.width().toFloat()
+            referenceSubjectScale = initialScale.coerceIn(0.04f, 0.90f)
+            filteredSubjectScale = referenceSubjectScale
+            prevFilteredScale = referenceSubjectScale
+
+            val sW = sensorRect.width().toFloat()
+            val sH = sensorRect.height().toFloat()
+            bounds = RectF(
+                (matchedFace.bounds.left - sensorRect.left) / sW,
+                (matchedFace.bounds.top - sensorRect.top) / sH,
+                (matchedFace.bounds.right - sensorRect.left) / sW,
+                (matchedFace.bounds.bottom - sensorRect.top) / sH
+            )
+        } else {
+            isFaceLocked = false
+            lockedFaceId = -1
+            referenceSubjectScale = 0.25f
+            filteredSubjectScale = 0.25f
+            prevFilteredScale = 0.25f
+
+            val halfW = 0.14f
+            val halfH = 0.14f
+            bounds = RectF(
+                (lockedNormX - halfW).coerceAtLeast(0f),
+                (lockedNormY - halfH).coerceAtLeast(0f),
+                (lockedNormX + halfW).coerceAtMost(1f),
+                (lockedNormY + halfH).coerceAtMost(1f)
+            )
+        }
+
+        scaleVelocity = 0f
+        missedFrames = 0
 
         _dollyState.value = _dollyState.value.copy(
             isCalibrated = true,
             isTracking = true,
+            isSubjectLocked = true,
+            subjectBounds = bounds,
+            trackingConfidence = if (isFaceLocked) 0.96f else 0.88f,
             targetDistanceMeters = referenceDistanceMeters,
             initialZoom = referenceZoom,
             currentDistanceMeters = referenceDistanceMeters,
             targetZoom = referenceZoom,
             smoothedZoom = currentSmoothedZoom,
-            statusPrompt = if (isFaceLocked) "Subject Locked (Face) · Walk smoothly" else "Center Subject Locked · Walk smoothly"
+            statusPrompt = if (isFaceLocked) "Subject Locked (Face) · Walk smoothly" else "Target Locked · Walk smoothly"
+        )
+    }
+
+    /**
+     * Backward-compatible calibration using center or detected face.
+     */
+    fun calibrate(
+        currentZoom: Float,
+        currentFace: Face?,
+        lensFocusDiopters: Float,
+        sensorRect: Rect?,
+        minZoom: Float = 1.0f,
+        maxZoom: Float = 8.0f
+    ) {
+        val facesArray = if (currentFace != null) arrayOf(currentFace) else emptyArray()
+        lockSubject(
+            normX = 0.5f,
+            normY = 0.5f,
+            currentZoom = currentZoom,
+            faces = facesArray,
+            lensFocusDiopters = lensFocusDiopters,
+            sensorRect = sensorRect,
+            minZoom = minZoom,
+            maxZoom = maxZoom
         )
     }
 
@@ -104,15 +201,22 @@ class DollyZoomEngine {
      */
     fun reset() {
         isFaceLocked = false
-        referenceSubjectScale = 0f
-        filteredSubjectScale = 0f
+        lockedFaceId = -1
+        referenceSubjectScale = 0.25f
+        filteredSubjectScale = 0.25f
+        prevFilteredScale = 0.25f
+        scaleVelocity = 0f
+
         referenceDistanceMeters = 1.2f
         filteredDistanceMeters = 1.2f
+        prevFilteredDistance = 1.2f
+        distanceVelocity = 0f
+
         referenceZoom = 1.0f
         currentSmoothedZoom = 1.0f
         targetZoomClamped = 1.0f
         smoothedTrackingRatio = 1.0f
-        missedFaceFrames = 0
+        missedFrames = 0
         _dollyState.value = DollyZoomState()
     }
 
@@ -122,7 +226,7 @@ class DollyZoomEngine {
 
     /**
      * Called on each Camera2 TotalCaptureResult frame.
-     * Computes continuous, smooth, slew-rate-limited zoom without sudden jumps, flicker, or freezing.
+     * Computes real-time apparent size, predictive zoom compensation, and smooth output.
      */
     fun processFrame(
         result: CaptureResult,
@@ -133,9 +237,8 @@ class DollyZoomEngine {
         val state = _dollyState.value
         if (!state.isCalibrated || !state.isTracking) return null
 
-        // Graceful fallback if camera hardware does not support zoom range
         if (maxAvailableZoom <= minAvailableZoom + 0.05f) {
-            _dollyState.value = state.copy(statusPrompt = "Camera does not support continuous zoom range")
+            _dollyState.value = state.copy(statusPrompt = "Continuous zoom not supported by hardware")
             return null
         }
 
@@ -143,39 +246,66 @@ class DollyZoomEngine {
         val diopters = result.get(CaptureResult.LENS_FOCUS_DISTANCE) ?: 0f
         if (diopters > 0.01f) {
             val rawDist = (1.0f / diopters).coerceIn(0.25f, 15.0f)
-            filteredDistanceMeters = filteredDistanceMeters * (1f - DISTANCE_FILTER_ALPHA) + (rawDist * DISTANCE_FILTER_ALPHA)
+            val newDist = filteredDistanceMeters * (1f - DISTANCE_FILTER_ALPHA) + (rawDist * DISTANCE_FILTER_ALPHA)
+            distanceVelocity = newDist - filteredDistanceMeters
+            prevFilteredDistance = filteredDistanceMeters
+            filteredDistanceMeters = newDist
         }
 
-        // 2. Track subject scale
+        // 2. Real-time apparent size calculation & tracking
         val faces = result.get(CaptureResult.STATISTICS_FACES)
-        val primaryFace = faces?.firstOrNull()
-
-        if (isFaceLocked && primaryFace != null && sensorRect != null && sensorRect.width() > 0) {
-            missedFaceFrames = 0
-            val instantaneousScale = primaryFace.bounds.width().toFloat() / sensorRect.width().toFloat()
-            filteredSubjectScale = filteredSubjectScale * (1f - SCALE_FILTER_ALPHA) + (instantaneousScale * SCALE_FILTER_ALPHA)
-
-            // Vertigo formula: To maintain constant subject scale:
-            // Target Ratio = Reference Scale / Current Scale
-            val faceRatio = referenceSubjectScale / max(filteredSubjectScale, 0.02f)
-            smoothedTrackingRatio = smoothedTrackingRatio * (1f - SCALE_FILTER_ALPHA) + (faceRatio * SCALE_FILTER_ALPHA)
-        } else {
-            // Distance-based dolly ratio with smooth temporal continuity
-            missedFaceFrames++
-            val distRatio = filteredDistanceMeters / max(referenceDistanceMeters, 0.15f)
-            val blendFactor = if (isFaceLocked && missedFaceFrames < 30) 0.08f else DISTANCE_FILTER_ALPHA
-            smoothedTrackingRatio = smoothedTrackingRatio * (1f - blendFactor) + (distRatio * blendFactor)
+        var matchedFace: Face? = null
+        if (isFaceLocked && faces != null && faces.isNotEmpty()) {
+            matchedFace = faces.firstOrNull { it.id == lockedFaceId } ?: faces.firstOrNull()
         }
 
-        val rawTargetZoom = referenceZoom * smoothedTrackingRatio
+        var trackingConfidence = 0.85f
+        var currentBounds = state.subjectBounds
 
-        // 3. Clamp target to available camera range
+        if (isFaceLocked && matchedFace != null && sensorRect != null && sensorRect.width() > 0) {
+            missedFrames = 0
+            val instantaneousScale = matchedFace.bounds.width().toFloat() / sensorRect.width().toFloat()
+            val newScale = filteredSubjectScale * (1f - SCALE_FILTER_ALPHA) + (instantaneousScale * SCALE_FILTER_ALPHA)
+            scaleVelocity = newScale - filteredSubjectScale
+            prevFilteredScale = filteredSubjectScale
+            filteredSubjectScale = newScale
+
+            // Predictive apparent size: anticipate movement lookahead to eliminate lag
+            val predictedScale = (filteredSubjectScale + scaleVelocity * PREDICTIVE_LOOKAHEAD_FRAMES).coerceAtLeast(0.02f)
+
+            // Vertigo formula: To maintain constant subject apparent size:
+            // Target Ratio = Reference Scale / Predicted Apparent Scale
+            val faceRatio = referenceSubjectScale / predictedScale
+            smoothedTrackingRatio = smoothedTrackingRatio * (1f - SCALE_FILTER_ALPHA) + (faceRatio * SCALE_FILTER_ALPHA)
+            trackingConfidence = 0.95f
+
+            // Update bounding reticle in real-time
+            val sW = sensorRect.width().toFloat()
+            val sH = sensorRect.height().toFloat()
+            currentBounds = RectF(
+                (matchedFace.bounds.left - sensorRect.left) / sW,
+                (matchedFace.bounds.top - sensorRect.top) / sH,
+                (matchedFace.bounds.right - sensorRect.left) / sW,
+                (matchedFace.bounds.bottom - sensorRect.top) / sH
+            )
+        } else {
+            // Distance-based predictive zoom compensation
+            missedFrames++
+            val predictedDist = (filteredDistanceMeters + distanceVelocity * PREDICTIVE_LOOKAHEAD_FRAMES).coerceAtLeast(0.15f)
+            val distRatio = predictedDist / max(referenceDistanceMeters, 0.15f)
+            val blendFactor = if (isFaceLocked && missedFrames < 30) 0.08f else DISTANCE_FILTER_ALPHA
+            smoothedTrackingRatio = smoothedTrackingRatio * (1f - blendFactor) + (distRatio * blendFactor)
+            trackingConfidence = if (missedFrames < 30) 0.80f else 0.70f
+        }
+
+        // 3. Target zoom calculation
+        val rawTargetZoom = referenceZoom * smoothedTrackingRatio
         val boundedTarget = rawTargetZoom.coerceIn(minAvailableZoom, maxAvailableZoom)
         targetZoomClamped = boundedTarget
 
-        // 4. Stable Critically-Damped Slew-Rate Limiter (guarantees continuous, buttery-smooth transition, never jumping)
+        // 4. Stable Slew-Rate Limiting for buttery-smooth transition
         val delta = boundedTarget - currentSmoothedZoom
-        val adaptiveStep = delta * 0.16f
+        val adaptiveStep = delta * 0.18f
         val step = adaptiveStep.coerceIn(-MAX_ZOOM_SLEW_PER_FRAME, MAX_ZOOM_SLEW_PER_FRAME)
         currentSmoothedZoom += step
 
@@ -184,17 +314,19 @@ class DollyZoomEngine {
         val atMinLimit = currentSmoothedZoom <= minAvailableZoom + 0.05f
 
         val prompt = when {
-            atMaxLimit -> "Max Zoom Reached · Maintain Distance"
-            atMinLimit -> "Min Zoom Reached · Maintain Distance"
-            filteredDistanceMeters < referenceDistanceMeters * 0.88f -> "Pushing In · Background expanding"
-            filteredDistanceMeters > referenceDistanceMeters * 1.12f -> "Pulling Out · Background compressing"
-            else -> "Tracking Subject · Keep moving smoothly"
+            atMaxLimit -> "Max Zoom Limit Reached · Hold Distance"
+            atMinLimit -> "Min Zoom Limit Reached · Hold Distance"
+            filteredDistanceMeters < referenceDistanceMeters * 0.88f -> "Pushing In · Foreground locked, background expanding"
+            filteredDistanceMeters > referenceDistanceMeters * 1.12f -> "Pulling Out · Foreground locked, background compressing"
+            else -> "Subject Locked · Move smoothly forwards or backwards"
         }
 
         _dollyState.value = state.copy(
             currentDistanceMeters = filteredDistanceMeters,
             targetZoom = boundedTarget,
             smoothedZoom = currentSmoothedZoom,
+            trackingConfidence = trackingConfidence,
+            subjectBounds = currentBounds,
             statusPrompt = prompt
         )
 

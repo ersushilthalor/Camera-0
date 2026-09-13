@@ -406,15 +406,6 @@ class CameraPreferences(context: Context) {
         get() = prefs.getBoolean("pref_sun_slider", true)
         set(value) = prefs.edit().putBoolean("pref_sun_slider", value).apply()
 
-    // Dual Video Preferences
-    var dualVideoLayout: com.example.camera.model.DualVideoLayout
-        get() {
-            val name = prefs.getString("pref_dual_layout", com.example.camera.model.DualVideoLayout.SIDE_BY_SIDE.name)
-                ?: com.example.camera.model.DualVideoLayout.SIDE_BY_SIDE.name
-            return try { com.example.camera.model.DualVideoLayout.valueOf(name) } catch (e: Exception) { com.example.camera.model.DualVideoLayout.SIDE_BY_SIDE }
-        }
-        set(value) = prefs.edit().putString("pref_dual_layout", value.name).apply()
-
     // Dolly Zoom Preferences
     var dollyDirection: com.example.camera.model.DollyDirection
         get() {
@@ -472,14 +463,6 @@ class CameraPreferences(context: Context) {
             isEisPreferred = value.isEisPreferred
             isAdaptiveFpsLensStabilization = value.isAdaptiveFpsLens
             isUltraStabilizationEnabled = value.isUltraStabilizationEnabled
-        }
-
-    var dualVideoConfig: DualVideoConfig
-        get() = DualVideoConfig(
-            layout = dualVideoLayout
-        )
-        set(value) {
-            dualVideoLayout = value.layout
         }
 
     var uiCustomizationState: UiCustomizationState

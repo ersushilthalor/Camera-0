@@ -419,7 +419,8 @@ class CinemaSoftwareRecordingEngine(private val context: Context) {
                                     baseVideoPtsUs = bufferInfo.presentationTimeUs
                                 }
                                 var ptsUs = bufferInfo.presentationTimeUs - baseVideoPtsUs
-                                if (ptsUs <= lastVideoPtsUs) {
+                                if (ptsUs < 0) ptsUs = 0
+                                if (ptsUs <= lastVideoPtsUs && lastVideoPtsUs > 0) {
                                     ptsUs = lastVideoPtsUs + 1000L
                                 }
                                 bufferInfo.presentationTimeUs = ptsUs
@@ -471,12 +472,31 @@ class CinemaSoftwareRecordingEngine(private val context: Context) {
     // AUDIO PIPELINE (RECORDING & ENCODING)
     // =========================================================================
 
+    private var totalAudioFramesWritten = 0L
+
     private fun setupAudioPipeline(isWebm: Boolean) {
-        val audioMime = if (isWebm) MediaFormat.MIMETYPE_AUDIO_OPUS else MediaFormat.MIMETYPE_AUDIO_AAC
+        val audioMime = if (isWebm) {
+            if (hasEncoderForMime(MediaFormat.MIMETYPE_AUDIO_OPUS)) {
+                MediaFormat.MIMETYPE_AUDIO_OPUS
+            } else {
+                Log.w(TAG, "Opus encoder not found on device for WebM container")
+                return
+            }
+        } else {
+            MediaFormat.MIMETYPE_AUDIO_AAC
+        }
+
         val sampleRate = 48000
         val channelConfig = AudioFormat.CHANNEL_IN_STEREO
         val audioFormat = AudioFormat.ENCODING_PCM_16BIT
-        val bufferSize = AudioRecord.getMinBufferSize(sampleRate, channelConfig, audioFormat).coerceAtLeast(8192)
+        
+        // Accurate frame chunk size:
+        // Opus at 48kHz: 960 samples per channel (20ms) * 2 channels * 2 bytes = 3840 bytes
+        // AAC: 1024 samples per channel * 2 channels * 2 bytes = 4096 bytes
+        val frameChunkSize = if (audioMime == MediaFormat.MIMETYPE_AUDIO_OPUS) 3840 else 4096
+
+        val minBuf = AudioRecord.getMinBufferSize(sampleRate, channelConfig, audioFormat)
+        val recBufSize = if (minBuf > 0) maxOf(minBuf * 4, 16384) else 16384
 
         val record = try {
             AudioRecord(
@@ -484,7 +504,7 @@ class CinemaSoftwareRecordingEngine(private val context: Context) {
                 sampleRate,
                 channelConfig,
                 audioFormat,
-                bufferSize
+                recBufSize
             )
         } catch (e: SecurityException) {
             Log.w(TAG, "AudioRecord permission denied", e)
@@ -497,8 +517,12 @@ class CinemaSoftwareRecordingEngine(private val context: Context) {
             return
         }
 
+        val audioBitrate = if (audioMime == MediaFormat.MIMETYPE_AUDIO_OPUS) 128_000 else 192_000
+        val maxInputSize = if (audioMime == MediaFormat.MIMETYPE_AUDIO_OPUS) 7680 else 8192
+
         val audioMediaFormat = MediaFormat.createAudioFormat(audioMime, sampleRate, 2).apply {
-            setInteger(MediaFormat.KEY_BIT_RATE, 192_000)
+            setInteger(MediaFormat.KEY_BIT_RATE, audioBitrate)
+            setInteger(MediaFormat.KEY_MAX_INPUT_SIZE, maxInputSize)
             if (audioMime == MediaFormat.MIMETYPE_AUDIO_AAC) {
                 setInteger(MediaFormat.KEY_AAC_PROFILE, MediaCodecInfo.CodecProfileLevel.AACObjectLC)
             }
@@ -512,46 +536,74 @@ class CinemaSoftwareRecordingEngine(private val context: Context) {
             return
         }
 
-        encoder.configure(audioMediaFormat, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
-        encoder.start()
-        record.startRecording()
+        try {
+            encoder.configure(audioMediaFormat, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+            encoder.start()
+            record.startRecording()
+        } catch (e: Exception) {
+            record.release()
+            try { encoder.release() } catch (ignored: Exception) {}
+            Log.w(TAG, "Failed to configure/start audio encoder", e)
+            return
+        }
 
+        totalAudioFramesWritten = 0L
         audioRecord = record
         audioCodec = encoder
 
-        startAudioThreads(record, encoder, bufferSize)
+        startAudioThreads(record, encoder, frameChunkSize, sampleRate)
     }
 
-    private fun startAudioThreads(record: AudioRecord, encoder: MediaCodec, bufferSize: Int) {
-        // Feed PCM data into Audio MediaCodec
+    private fun startAudioThreads(record: AudioRecord, encoder: MediaCodec, frameChunkSize: Int, sampleRate: Int) {
+        // Feed PCM data into Audio MediaCodec with zero BufferOverflow risk and accurate sample timestamps
         audioRecordThread = Thread({
-            val pcmBuf = ByteArray(bufferSize)
+            val pcmBuf = ByteArray(frameChunkSize)
             while (isRecording.get()) {
                 val readBytes = record.read(pcmBuf, 0, pcmBuf.size)
                 if (readBytes > 0) {
-                    val inputBufferIndex = try {
-                        encoder.dequeueInputBuffer(DRAIN_TIMEOUT_US)
-                    } catch (e: Exception) { -1 }
+                    var offset = 0
+                    while (offset < readBytes && isRecording.get()) {
+                        val inputBufferIndex = try {
+                            encoder.dequeueInputBuffer(DRAIN_TIMEOUT_US)
+                        } catch (e: Exception) { -1 }
 
-                    if (inputBufferIndex >= 0) {
-                        val inputBuffer = encoder.getInputBuffer(inputBufferIndex)
-                        if (inputBuffer != null) {
-                            inputBuffer.clear()
-                            inputBuffer.put(pcmBuf, 0, readBytes)
-                            val ptsUs = System.nanoTime() / 1000L
-                            encoder.queueInputBuffer(inputBufferIndex, 0, readBytes, ptsUs, 0)
+                        if (inputBufferIndex >= 0) {
+                            val inputBuffer = encoder.getInputBuffer(inputBufferIndex)
+                            if (inputBuffer != null) {
+                                inputBuffer.clear()
+                                val remaining = inputBuffer.remaining()
+                                val toWrite = minOf(readBytes - offset, remaining)
+                                inputBuffer.put(pcmBuf, offset, toWrite)
+                                offset += toWrite
+
+                                val ptsUs = (totalAudioFramesWritten * 1_000_000L) / sampleRate
+                                totalAudioFramesWritten += (toWrite / 4) // 4 bytes per stereo 16-bit frame
+                                encoder.queueInputBuffer(inputBufferIndex, 0, toWrite, ptsUs, 0)
+                            }
+                        } else {
+                            try {
+                                Thread.sleep(2)
+                            } catch (ignored: InterruptedException) {}
                         }
                     }
                 }
             }
 
-            // Signal audio EOS
-            try {
-                val inputBufferIndex = encoder.dequeueInputBuffer(DRAIN_TIMEOUT_US)
-                if (inputBufferIndex >= 0) {
-                    encoder.queueInputBuffer(inputBufferIndex, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
-                }
-            } catch (ignored: Exception) {}
+            // Signal audio EOS gracefully
+            var eosSent = false
+            var attempts = 0
+            while (!eosSent && attempts++ < 30) {
+                try {
+                    val inputBufferIndex = encoder.dequeueInputBuffer(DRAIN_TIMEOUT_US)
+                    if (inputBufferIndex >= 0) {
+                        val ptsUs = (totalAudioFramesWritten * 1_000_000L) / sampleRate
+                        encoder.queueInputBuffer(inputBufferIndex, 0, 0, ptsUs, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
+                        eosSent = true
+                    } else {
+                        Thread.sleep(10)
+                    }
+                } catch (ignored: Exception) { break }
+            }
         }, "Cinema-Audio-Record-Thread").apply { start() }
 
         // Drain encoded audio packets into MediaMuxer
@@ -559,7 +611,7 @@ class CinemaSoftwareRecordingEngine(private val context: Context) {
             val bufferInfo = MediaCodec.BufferInfo()
             var eosReached = false
 
-            while (!eosReached && isRecording.get()) {
+            while (!eosReached && (isRecording.get() || isStopping.get())) {
                 val outputBufferIndex = try {
                     encoder.dequeueOutputBuffer(bufferInfo, DRAIN_TIMEOUT_US)
                 } catch (e: Exception) { break }
@@ -589,8 +641,9 @@ class CinemaSoftwareRecordingEngine(private val context: Context) {
                                     baseAudioPtsUs = bufferInfo.presentationTimeUs
                                 }
                                 var ptsUs = bufferInfo.presentationTimeUs - baseAudioPtsUs
-                                if (ptsUs <= lastAudioPtsUs) {
-                                    ptsUs = lastAudioPtsUs + 1000L
+                                if (ptsUs < 0) ptsUs = 0
+                                if (ptsUs <= lastAudioPtsUs && lastAudioPtsUs > 0) {
+                                    ptsUs = lastAudioPtsUs + 500L
                                 }
                                 bufferInfo.presentationTimeUs = ptsUs
                                 lastAudioPtsUs = ptsUs

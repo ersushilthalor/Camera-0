@@ -181,7 +181,7 @@ class Camera2Engine(private val context: Context) {
     fun updateHybridStabilizationConfig(config: HybridStabilizationConfig) {
         _hybridStabilizationConfig.value = config
         val isVideoMode = currentMode == CameraMode.VIDEO || currentMode == CameraMode.CINEMA ||
-                currentMode == CameraMode.DUAL_VIDEO || currentMode == CameraMode.DOLLY_ZOOM
+                currentMode == CameraMode.DOLLY_ZOOM
         if (config.isUltraStabilizationEnabled && isVideoMode) {
             gyroStabilizationEngine.start()
         } else {
@@ -922,7 +922,7 @@ class Camera2Engine(private val context: Context) {
         updatePreviewAspectRatio()
 
         val isVideoMode = (mode == CameraMode.VIDEO || mode == CameraMode.CINEMA ||
-                mode == CameraMode.DUAL_VIDEO || mode == CameraMode.DOLLY_ZOOM)
+                mode == CameraMode.DOLLY_ZOOM)
         if (!isVideoMode || !_hybridStabilizationConfig.value.isUltraStabilizationEnabled) {
             gyroStabilizationEngine.stop()
             lastStabilizedCrop = null
@@ -1537,7 +1537,7 @@ class Camera2Engine(private val context: Context) {
             }
             FocusMode.CONTINUOUS -> {
                 val mode = if (currentMode == CameraMode.VIDEO || currentMode == CameraMode.CINEMA ||
-                    currentMode == CameraMode.DOLLY_ZOOM || currentMode == CameraMode.DUAL_VIDEO) {
+                    currentMode == CameraMode.DOLLY_ZOOM) {
                     CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_VIDEO
                 } else {
                     CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE
@@ -1554,7 +1554,7 @@ class Camera2Engine(private val context: Context) {
 
         // Coordinated Hybrid OIS + EIS Stabilization
         val isVideoMode = currentMode == CameraMode.VIDEO || currentMode == CameraMode.CINEMA ||
-                currentMode == CameraMode.DUAL_VIDEO || currentMode == CameraMode.DOLLY_ZOOM
+                currentMode == CameraMode.DOLLY_ZOOM
 
         val hybridConfig = _hybridStabilizationConfig.value
         if (isVideoMode) {
@@ -2008,7 +2008,7 @@ class Camera2Engine(private val context: Context) {
         }
     }
 
-    fun calibrateDollyZoom() {
+    fun lockDollySubjectAt(normX: Float, normY: Float) {
         val lens = _selectedLens.value ?: return
         val chars = getCharacteristics(lens.cameraId) ?: return
         val sensorRect = chars.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE)
@@ -2016,14 +2016,20 @@ class Camera2Engine(private val context: Context) {
         val lastResult = lastCaptureResult
         val faces = lastResult?.get(CaptureResult.STATISTICS_FACES)
         val diopters = lastResult?.get(CaptureResult.LENS_FOCUS_DISTANCE) ?: 0f
-        dollyZoomEngine.calibrate(
+        dollyZoomEngine.lockSubject(
+            normX = normX,
+            normY = normY,
             currentZoom = currentZoom,
-            currentFace = faces?.firstOrNull(),
+            faces = faces,
             lensFocusDiopters = diopters,
             sensorRect = sensorRect,
             minZoom = 1.0f,
             maxZoom = maxZoom
         )
+    }
+
+    fun calibrateDollyZoom() {
+        lockDollySubjectAt(0.5f, 0.5f)
     }
 
     fun resetDollyZoom() {

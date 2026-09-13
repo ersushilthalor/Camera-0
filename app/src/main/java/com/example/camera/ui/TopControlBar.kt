@@ -57,7 +57,6 @@ fun TopControlBar(
     onVideoSettingsClick: () -> Unit = {},
     onToggleMegapixelMode: () -> Unit = {},
     onDollyZoomClick: () -> Unit = {},
-    onDualVideoClick: () -> Unit = {},
     onFlashClick: () -> Unit,
     onTimerClick: () -> Unit,
     onGridClick: () -> Unit,
@@ -316,7 +315,7 @@ fun TopControlBar(
                         )
                     }
                 }
-                CameraMode.DOLLY_ZOOM, CameraMode.DUAL_VIDEO -> {
+                CameraMode.DOLLY_ZOOM -> {
                     val resLabel = when {
                         videoResolution?.width == 3840 || videoResolution?.height == 3840 -> "4K"
                         videoResolution?.width == 1920 || videoResolution?.height == 1920 -> "1080"
@@ -495,7 +494,7 @@ fun TopControlBar(
                         )
                     }
                 }
-                CameraMode.DOLLY_ZOOM, CameraMode.DUAL_VIDEO -> {
+                CameraMode.DOLLY_ZOOM -> {
                     Box(
                         modifier = Modifier
                             .height(34.dp)
@@ -670,30 +669,6 @@ fun TopControlBar(
             }
         }
 
-        val dualVideoButton = @Composable {
-            val isActive = (cameraMode == CameraMode.DUAL_VIDEO)
-            IconButton(
-                onClick = onDualVideoClick,
-                modifier = Modifier
-                    .size(buttonSize)
-                    .clip(CircleShape)
-                    .background(if (isActive) accentColor.copy(alpha = 0.25f) else Color(0xB21A1A1E))
-                    .border(
-                        1.dp,
-                        if (isActive) accentColor else Color.White.copy(alpha = 0.22f),
-                        CircleShape
-                    )
-                    .testTag("top_dual_video_button")
-            ) {
-                Icon(
-                    imageVector = Icons.Outlined.PictureInPictureAlt,
-                    contentDescription = "Dual Video",
-                    tint = if (isActive) accentColor else Color.White,
-                    modifier = Modifier.size(iconSize)
-                )
-            }
-        }
-
         val portraitStyleButton = @Composable {
             IconButton(
                 onClick = onPortraitStyleClick,
@@ -732,7 +707,7 @@ fun TopControlBar(
             }
         }
 
-        val isVideoFamily = (cameraMode == CameraMode.VIDEO || cameraMode == CameraMode.CINEMA || cameraMode == CameraMode.DOLLY_ZOOM || cameraMode == CameraMode.DUAL_VIDEO)
+        val isVideoFamily = (cameraMode == CameraMode.VIDEO || cameraMode == CameraMode.CINEMA || cameraMode == CameraMode.DOLLY_ZOOM)
 
         // Render Top Controls according to layoutConfig
         val visibleItems = layoutConfig.topControlsOrder.filterNot { layoutConfig.hiddenTopControls.contains(it) }
@@ -744,7 +719,7 @@ fun TopControlBar(
             TopBarAlignment.COMPACT_RIGHT -> Arrangement.spacedBy(layoutConfig.topControlsSpacingDp.dp, Alignment.End)
         }
 
-        val shouldScroll = (if (isVideoFamily) 6 else visibleItems.size) > 5
+        val shouldScroll = (if (isVideoFamily) 5 else visibleItems.size) > 5
         val topScrollState = rememberScrollState()
 
         Row(
@@ -766,7 +741,6 @@ fun TopControlBar(
             } else if (isVideoFamily) {
                 flashButton()
                 dollyZoomButton()
-                dualVideoButton()
                 primaryBadge()
                 secondaryBadge()
                 settingsButton()

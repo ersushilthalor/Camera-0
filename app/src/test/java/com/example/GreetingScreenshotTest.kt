@@ -1,6 +1,6 @@
 package com.example
 
-import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onRoot
 import com.example.camera.ui.CameraPermissionPrompt
 import com.example.ui.theme.MyApplicationTheme
@@ -18,22 +18,25 @@ import org.robolectric.annotation.GraphicsMode
 @Config(qualifiers = RobolectricDeviceQualifiers.Pixel8, sdk = [36])
 class GreetingScreenshotTest {
 
-  @get:Rule val composeTestRule = createAndroidComposeRule<MainActivity>()
+  @get:Rule val composeTestRule = createComposeRule()
 
   @Test
-  fun testMainActivityLaunchAndRender() {
-    composeTestRule.waitForIdle()
-  }
-
-  @Test
-  fun greeting_screenshot() {
-
+  fun testCameraPermissionPromptRender() {
     composeTestRule.setContent {
       MyApplicationTheme {
         CameraPermissionPrompt(onRequestPermission = {})
       }
     }
+    composeTestRule.waitForIdle()
+  }
 
+  @Test
+  fun greeting_screenshot() {
+    composeTestRule.setContent {
+      MyApplicationTheme {
+        CameraPermissionPrompt(onRequestPermission = {})
+      }
+    }
     composeTestRule.onRoot().captureRoboImage(filePath = "src/test/screenshots/greeting.png")
   }
 }

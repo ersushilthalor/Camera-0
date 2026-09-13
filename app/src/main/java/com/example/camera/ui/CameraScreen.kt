@@ -157,7 +157,6 @@ fun CameraScreen(
     val selectedLens by viewModel.selectedLens.collectAsStateWithLifecycle()
 
     val dollyZoomState by viewModel.dollyZoomState.collectAsStateWithLifecycle()
-    val dualVideoConfig by viewModel.dualVideoConfig.collectAsStateWithLifecycle()
     val nightConfig by viewModel.nightConfig.collectAsStateWithLifecycle()
     val nightProgress by viewModel.nightProgress.collectAsStateWithLifecycle()
     val hybridStabilizationConfig by viewModel.hybridStabilizationConfig.collectAsStateWithLifecycle()
@@ -256,28 +255,7 @@ fun CameraScreen(
                 dollyState = dollyZoomState,
                 onCalibrateSubject = { viewModel.calibrateDollyZoom() },
                 onResetDolly = { viewModel.resetDollyZoom() },
-                modifier = Modifier.fillMaxSize()
-            )
-        }
-
-        // 1d. Real Dual Video Multi-Camera Viewfinder & Split Pipeline
-        if (cameraMode == CameraMode.DUAL_VIDEO) {
-            DualVideoViewfinder(
-                config = dualVideoConfig,
-                onPrimarySurfaceReady = { surface ->
-                    viewModel.dualCameraManager.setPrimarySurface(surface)
-                },
-                onSecondarySurfaceReady = { surface ->
-                    viewModel.dualCameraManager.setSecondarySurface(surface)
-                },
-                onLayoutChanged = { layout ->
-                    viewModel.updateDualVideoConfig(dualVideoConfig.copy(layout = layout))
-                },
-                onSwapCameras = {
-                    val p = dualVideoConfig.primaryCameraId
-                    val s = dualVideoConfig.secondaryCameraId
-                    viewModel.updateDualVideoConfig(dualVideoConfig.copy(primaryCameraId = s, secondaryCameraId = p))
-                },
+                onLockSubject = { x, y -> viewModel.lockDollySubjectAt(x, y) },
                 modifier = Modifier.fillMaxSize()
             )
         }
@@ -324,13 +302,6 @@ fun CameraScreen(
                     viewModel.setCameraMode(CameraMode.VIDEO)
                 } else {
                     viewModel.setCameraMode(CameraMode.DOLLY_ZOOM)
-                }
-            },
-            onDualVideoClick = {
-                if (cameraMode == CameraMode.DUAL_VIDEO) {
-                    viewModel.setCameraMode(CameraMode.VIDEO)
-                } else {
-                    viewModel.setCameraMode(CameraMode.DUAL_VIDEO)
                 }
             },
             onFlashClick = { viewModel.cycleFlashMode() },
@@ -502,10 +473,6 @@ fun CameraScreen(
             onSelectDollyZoom = {
                 viewModel.setMoreModesOpen(false)
                 viewModel.setCameraMode(CameraMode.DOLLY_ZOOM)
-            },
-            onSelectDualVideo = {
-                viewModel.setMoreModesOpen(false)
-                viewModel.setCameraMode(CameraMode.DUAL_VIDEO)
             },
             onSelectAiSubjectTracking = {
                 viewModel.setMoreModesOpen(false)

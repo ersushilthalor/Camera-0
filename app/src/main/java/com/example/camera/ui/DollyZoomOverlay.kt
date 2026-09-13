@@ -7,6 +7,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -23,7 +24,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -32,54 +33,82 @@ import com.example.camera.model.DollyZoomState
 
 /**
  * Dolly Zoom Real-Time HUD Overlay.
- * Displays dynamic subject tracking reticle, auto-zoom compensation metric,
- * and calibration actions.
+ *
+ * Provides:
+ * - User tap-to-lock gesture anywhere on viewfinder
+ * - Real-time apparent size calculation & tracking reticle
+ * - Predictive zoom compensation metric
+ * - Smooth HUD status display & controls
  */
 @Composable
 fun DollyZoomOverlay(
     dollyState: DollyZoomState,
     onCalibrateSubject: () -> Unit,
     onResetDolly: () -> Unit,
+    onLockSubject: (normX: Float, normY: Float) -> Unit = { _, _ -> },
     modifier: Modifier = Modifier
 ) {
     Box(
         modifier = modifier
             .testTag("dolly_zoom_overlay")
-    ) {
-        // 1. Center Reticle for Subject Lock
-        Box(
-            modifier = Modifier
-                .align(Alignment.Center)
-                .size(160.dp)
-        ) {
-            Canvas(modifier = Modifier.fillMaxSize()) {
-                val bracketLen = 28.dp.toPx()
-                val strokeW = 2.5.dp.toPx()
-                val goldColor = if (dollyState.isCalibrated) Color(0xFFFFD54F) else Color.White.copy(alpha = 0.7f)
-
-                // Top-Left corner
-                drawLine(goldColor, Offset(0f, 0f), Offset(bracketLen, 0f), strokeWidth = strokeW, cap = StrokeCap.Round)
-                drawLine(goldColor, Offset(0f, 0f), Offset(0f, bracketLen), strokeWidth = strokeW, cap = StrokeCap.Round)
-
-                // Top-Right corner
-                drawLine(goldColor, Offset(size.width, 0f), Offset(size.width - bracketLen, 0f), strokeWidth = strokeW, cap = StrokeCap.Round)
-                drawLine(goldColor, Offset(size.width, 0f), Offset(size.width, bracketLen), strokeWidth = strokeW, cap = StrokeCap.Round)
-
-                // Bottom-Left corner
-                drawLine(goldColor, Offset(0f, size.height), Offset(bracketLen, size.height), strokeWidth = strokeW, cap = StrokeCap.Round)
-                drawLine(goldColor, Offset(0f, size.height), Offset(0f, size.height - bracketLen), strokeWidth = strokeW, cap = StrokeCap.Round)
-
-                // Bottom-Right corner
-                drawLine(goldColor, Offset(size.width, size.height), Offset(size.width - bracketLen, size.height), strokeWidth = strokeW, cap = StrokeCap.Round)
-                drawLine(goldColor, Offset(size.width, size.height), Offset(size.width, size.height - bracketLen), strokeWidth = strokeW, cap = StrokeCap.Round)
-
-                // Center crosshair tick
-                val cX = size.width / 2
-                val cY = size.height / 2
-                val tickLen = 6.dp.toPx()
-                drawLine(goldColor.copy(alpha = 0.5f), Offset(cX - tickLen, cY), Offset(cX + tickLen, cY), strokeWidth = 1.5.dp.toPx())
-                drawLine(goldColor.copy(alpha = 0.5f), Offset(cX, cY - tickLen), Offset(cX, cY + tickLen), strokeWidth = 1.5.dp.toPx())
+            .pointerInput(Unit) {
+                detectTapGestures { offset ->
+                    val normX = (offset.x / size.width).coerceIn(0f, 1f)
+                    val normY = (offset.y / size.height).coerceIn(0f, 1f)
+                    onLockSubject(normX, normY)
+                }
             }
+    ) {
+        // 1. Dynamic Subject Tracking Reticle (Real-time Apparent Size)
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            val strokeW = 2.5.dp.toPx()
+            val goldColor = if (dollyState.isCalibrated) Color(0xFFFFD54F) else Color.White.copy(alpha = 0.7f)
+
+            val bounds = dollyState.subjectBounds
+            val rectLeft: Float
+            val rectTop: Float
+            val rectWidth: Float
+            val rectHeight: Float
+
+            if (bounds != null && dollyState.isCalibrated) {
+                // Real-time tracked apparent size in viewfinder coordinates
+                rectLeft = bounds.left * size.width
+                rectTop = bounds.top * size.height
+                rectWidth = (bounds.width() * size.width).coerceIn(80.dp.toPx(), size.width * 0.9f)
+                rectHeight = (bounds.height() * size.height).coerceIn(80.dp.toPx(), size.height * 0.9f)
+            } else {
+                // Center reticle
+                val defSize = 160.dp.toPx()
+                rectLeft = (size.width - defSize) / 2f
+                rectTop = (size.height - defSize) / 2f
+                rectWidth = defSize
+                rectHeight = defSize
+            }
+
+            val bracketLen = minOf(28.dp.toPx(), rectWidth / 3f, rectHeight / 3f)
+
+            // Top-Left corner
+            drawLine(goldColor, Offset(rectLeft, rectTop), Offset(rectLeft + bracketLen, rectTop), strokeWidth = strokeW, cap = StrokeCap.Round)
+            drawLine(goldColor, Offset(rectLeft, rectTop), Offset(rectLeft, rectTop + bracketLen), strokeWidth = strokeW, cap = StrokeCap.Round)
+
+            // Top-Right corner
+            drawLine(goldColor, Offset(rectLeft + rectWidth, rectTop), Offset(rectLeft + rectWidth - bracketLen, rectTop), strokeWidth = strokeW, cap = StrokeCap.Round)
+            drawLine(goldColor, Offset(rectLeft + rectWidth, rectTop), Offset(rectLeft + rectWidth, rectTop + bracketLen), strokeWidth = strokeW, cap = StrokeCap.Round)
+
+            // Bottom-Left corner
+            drawLine(goldColor, Offset(rectLeft, rectTop + rectHeight), Offset(rectLeft + bracketLen, rectTop + rectHeight), strokeWidth = strokeW, cap = StrokeCap.Round)
+            drawLine(goldColor, Offset(rectLeft, rectTop + rectHeight), Offset(rectLeft, rectTop + rectHeight - bracketLen), strokeWidth = strokeW, cap = StrokeCap.Round)
+
+            // Bottom-Right corner
+            drawLine(goldColor, Offset(rectLeft + rectWidth, rectTop + rectHeight), Offset(rectLeft + rectWidth - bracketLen, rectTop + rectHeight), strokeWidth = strokeW, cap = StrokeCap.Round)
+            drawLine(goldColor, Offset(rectLeft + rectWidth, rectTop + rectHeight), Offset(rectLeft + rectWidth, rectTop + rectHeight - bracketLen), strokeWidth = strokeW, cap = StrokeCap.Round)
+
+            // Center crosshair tick
+            val cX = rectLeft + rectWidth / 2f
+            val cY = rectTop + rectHeight / 2f
+            val tickLen = 6.dp.toPx()
+            drawLine(goldColor.copy(alpha = 0.5f), Offset(cX - tickLen, cY), Offset(cX + tickLen, cY), strokeWidth = 1.5.dp.toPx())
+            drawLine(goldColor.copy(alpha = 0.5f), Offset(cX, cY - tickLen), Offset(cX, cY + tickLen), strokeWidth = 1.5.dp.toPx())
         }
 
         // 2. Status & Metric Badge (Upper Third)
@@ -106,9 +135,13 @@ fun DollyZoomOverlay(
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(
                     text = if (dollyState.isCalibrated) {
-                        "ZOOM: %.1fx · DIST: %.2fm".format(dollyState.smoothedZoom, dollyState.currentDistanceMeters)
+                        "ZOOM: %.1fx · DIST: %.2fm · CONF: %d%%".format(
+                            dollyState.smoothedZoom,
+                            dollyState.currentDistanceMeters,
+                            (dollyState.trackingConfidence * 100).toInt()
+                        )
                     } else {
-                        "DOLLY READY · FRAME SUBJECT"
+                        "TAP SUBJECT TO LOCK DOLLY"
                     },
                     color = Color.White,
                     fontSize = 12.sp,
@@ -123,7 +156,7 @@ fun DollyZoomOverlay(
 
             Text(
                 text = dollyState.statusPrompt,
-                color = Color.White.copy(alpha = 0.8f),
+                color = Color.White.copy(alpha = 0.85f),
                 fontSize = 11.sp,
                 fontWeight = FontWeight.Medium,
                 letterSpacing = 0.4.sp,
@@ -166,7 +199,7 @@ fun DollyZoomOverlay(
                 )
                 Spacer(modifier = Modifier.width(6.dp))
                 Text(
-                    text = if (dollyState.isCalibrated) "RE-LOCK SUBJECT" else "LOCK SUBJECT",
+                    text = if (dollyState.isCalibrated) "RE-LOCK (CENTER)" else "LOCK CENTER",
                     color = if (dollyState.isCalibrated) Color(0xFFFFD54F) else Color.Black,
                     fontSize = 11.5.sp,
                     fontWeight = FontWeight.ExtraBold,

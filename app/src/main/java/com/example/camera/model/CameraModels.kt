@@ -1,6 +1,7 @@
 package com.example.camera.model
 
 import android.graphics.ImageFormat
+import android.graphics.RectF
 import android.util.Size
 
 enum class CameraMode(val title: String) {
@@ -10,7 +11,6 @@ enum class CameraMode(val title: String) {
     CINEMA("Cinema"),
     NIGHT("Night"),
     DOLLY_ZOOM("Dolly"),
-    DUAL_VIDEO("Dual"),
     MORE("More"),
     AI_SUBJECT_TRACKING("AI Tracking")
 }
@@ -394,32 +394,17 @@ enum class DollyDirection(val label: String) {
 
 data class DollyZoomState(
     val isCalibrated: Boolean = false,
-    val targetDistanceMeters: Float = 1.0f,
+    val isTracking: Boolean = false,
+    val isSubjectLocked: Boolean = false,
     val initialZoom: Float = 1.0f,
-    val currentDistanceMeters: Float = 1.0f,
     val targetZoom: Float = 1.0f,
     val smoothedZoom: Float = 1.0f,
-    val isTracking: Boolean = true,
+    val targetDistanceMeters: Float = 1.0f,
+    val currentDistanceMeters: Float = 1.0f,
+    val trackingConfidence: Float = 0f,
+    val subjectBounds: RectF? = null,
     val direction: DollyDirection = DollyDirection.AUTO,
-    val statusPrompt: String = "Lock on subject to start Dolly Zoom"
-)
-
-enum class DualVideoLayout(val label: String) {
-    SIDE_BY_SIDE("Side by Side"),
-    TOP_BOTTOM("Top / Bottom"),
-    PIP("Picture in Picture")
-}
-
-data class DualVideoConfig(
-    val layout: DualVideoLayout = DualVideoLayout.SIDE_BY_SIDE,
-    val primaryCameraId: String = "0",
-    val secondaryCameraId: String = "1",
-    val isConcurrentSupported: Boolean = false,
-    val primaryZoom: Float = 1.0f,
-    val secondaryZoom: Float = 1.0f,
-    val primaryEv: Int = 0,
-    val secondaryEv: Int = 0,
-    val statusMessage: String = ""
+    val statusPrompt: String = "Tap subject to lock Dolly Zoom"
 )
 
 data class NightConfig(

@@ -19,8 +19,6 @@ import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-import com.example.camera.engine.DualCameraManager
-
 enum class ProControlTab(val label: String) {
     EXPOSURE("EV"),
     ISO("ISO"),
@@ -35,9 +33,6 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     val engine = Camera2Engine(application.applicationContext)
     private val portraitProcessor by lazy { PortraitProcessor(application.applicationContext) }
     private val preferences = CameraPreferences(application.applicationContext)
-
-    val dualCameraManager by lazy { DualCameraManager(application.applicationContext) }
-    val dualVideoConfig: StateFlow<DualVideoConfig> by lazy { dualCameraManager.config }
 
     val dollyZoomState: StateFlow<DollyZoomState> = engine.dollyZoomEngine.dollyState
 
@@ -57,20 +52,8 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     private val _tapFocusConfig = MutableStateFlow(preferences.tapFocusConfig)
     val tapFocusConfig: StateFlow<TapFocusConfig> = _tapFocusConfig.asStateFlow()
 
-    val isRecordingVideo: StateFlow<Boolean> = combine(
-        engine.isRecordingVideo,
-        dualCameraManager.isRecording
-    ) { engRec, dualRec ->
-        engRec || dualRec
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
-
-    val videoDurationSeconds: StateFlow<Int> = combine(
-        engine.videoDurationSeconds,
-        dualCameraManager.recordingDurationSeconds,
-        _cameraMode
-    ) { engDur, dualDur, mode ->
-        if (mode == CameraMode.DUAL_VIDEO) dualDur else engDur
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
+    val isRecordingVideo: StateFlow<Boolean> = engine.isRecordingVideo
+    val videoDurationSeconds: StateFlow<Int> = engine.videoDurationSeconds
 
     // Portrait Mode Controls & Pipeline State
     private val _portraitConfig = MutableStateFlow(
@@ -261,9 +244,6 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     fun safeInitializeCamera(onResult: (success: Boolean, errorMessage: String?) -> Unit = { _, _ -> }) {
         viewModelScope.launch(Dispatchers.Default) {
             engine.safeInitializeCamera { success, error ->
-                if (success) {
-                    dualCameraManager.safeInitializeDualCamera()
-                }
                 viewModelScope.launch(Dispatchers.Main) {
                     onResult(success, error)
                 }
@@ -470,16 +450,10 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             engine.setPreviewAspectRatio(4f / 3f)
         }
 
-        if (mode == CameraMode.DUAL_VIDEO || mode == CameraMode.AI_SUBJECT_TRACKING) {
+        if (mode == CameraMode.AI_SUBJECT_TRACKING) {
             engine.closeCamera()
-            if (mode == CameraMode.DUAL_VIDEO) {
-                dualCameraManager.prepareDualCameras()
-            }
         } else {
-            if (previousMode == CameraMode.DUAL_VIDEO) {
-                dualCameraManager.closeStreams()
-                engine.startCamera()
-            } else if (previousMode == CameraMode.AI_SUBJECT_TRACKING) {
+            if (previousMode == CameraMode.AI_SUBJECT_TRACKING) {
                 engine.startCamera()
             }
             engine.setMode(mode)
@@ -812,9 +786,9 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         showToast("Dolly Zoom Reset")
     }
 
-    fun updateDualVideoConfig(config: DualVideoConfig) {
-        dualCameraManager.updateConfig(config)
-        preferences.dualVideoConfig = config
+    fun lockDollySubjectAt(x: Float, y: Float) {
+        engine.lockDollySubjectAt(x, y)
+        showToast("Subject Locked for Dolly Zoom")
     }
 
     fun triggerNightCapture() {
@@ -895,7 +869,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         when (_cameraMode.value) {
             CameraMode.PHOTO, CameraMode.MORE, CameraMode.AI_SUBJECT_TRACKING -> triggerPhotoCapture()
             CameraMode.PORTRAIT -> triggerPortraitCapture()
-            CameraMode.VIDEO, CameraMode.CINEMA, CameraMode.DOLLY_ZOOM, CameraMode.DUAL_VIDEO -> triggerVideoCapture()
+            CameraMode.VIDEO, CameraMode.CINEMA, CameraMode.DOLLY_ZOOM -> triggerVideoCapture()
             CameraMode.NIGHT -> triggerNightCapture()
         }
     }
@@ -976,28 +950,6 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     private fun triggerVideoCapture() {
-        if (_cameraMode.value == CameraMode.DUAL_VIDEO) {
-            if (dualCameraManager.isRecording.value) {
-                dualCameraManager.stopRecording { uri ->
-                    if (uri != null) {
-                        showToast("Dual Video saved to DCIM/Camera")
-                    } else {
-                        showToast("Failed to save dual video")
-                    }
-                }
-            } else {
-                dualCameraManager.startRecording(
-                    onSaved = { uri ->
-                        showToast("Dual Video saved to DCIM/Camera")
-                    },
-                    onError = { error ->
-                        showToast("Dual Video error: $error")
-                    }
-                )
-            }
-            return
-        }
-
         if (engine.isRecordingVideo.value) {
             engine.stopVideoRecording()
             showToast("Video saved to DCIM/Camera")
@@ -1109,6 +1061,5 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     override fun onCleared() {
         super.onCleared()
         engine.release()
-        dualCameraManager.release()
     }
 }
