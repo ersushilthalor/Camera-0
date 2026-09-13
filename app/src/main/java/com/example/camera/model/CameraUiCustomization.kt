@@ -2,6 +2,7 @@ package com.example.camera.model
 
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -53,7 +54,9 @@ enum class FontFamilyOption(val label: String) {
     DEFAULT("Default Sans"),
     MONOSPACE("Monospace / Pro"),
     SERIF("Editorial Serif"),
-    ROUNDED("Modern Rounded");
+    ROUNDED("Modern Rounded"),
+    CYBER("Cyber Geometric"),
+    CONDENSED("Condensed Display");
 
     fun toComposeFontFamily(): FontFamily {
         return when (this) {
@@ -61,8 +64,59 @@ enum class FontFamilyOption(val label: String) {
             MONOSPACE -> FontFamily.Monospace
             SERIF -> FontFamily.Serif
             ROUNDED -> FontFamily.Default
+            CYBER -> FontFamily.Monospace
+            CONDENSED -> FontFamily.SansSerif
         }
     }
+}
+
+enum class FontWeightOption(val label: String, val weight: FontWeight) {
+    LIGHT("Light", FontWeight.Light),
+    NORMAL("Regular", FontWeight.Normal),
+    MEDIUM("Medium", FontWeight.Medium),
+    SEMI_BOLD("SemiBold", FontWeight.SemiBold),
+    BOLD("Bold", FontWeight.Bold),
+    EXTRA_BOLD("ExtraBold", FontWeight.ExtraBold)
+}
+
+enum class TextCaseOption(val label: String) {
+    UPPERCASE("UPPERCASE"),
+    TITLE_CASE("Title Case"),
+    LOWERCASE("lowercase");
+
+    fun format(text: String): String {
+        return when (this) {
+            UPPERCASE -> text.uppercase()
+            TITLE_CASE -> text.lowercase().replaceFirstChar { it.uppercase() }
+            LOWERCASE -> text.lowercase()
+        }
+    }
+}
+
+enum class TextShadowOption(val label: String) {
+    NONE("None"),
+    SUBTLE_SHADOW("Drop Shadow"),
+    NEON_GLOW("Neon Glow"),
+    TACTICAL_OUTLINE("Outline")
+}
+
+enum class IconStyleOption(val label: String, val description: String) {
+    ROUNDED_MATERIAL("Modern Rounded", "Clean, rounded corners with smooth balance"),
+    MINIMAL_OUTLINE("Minimal Hairline", "Crisp ultra-thin 1.2dp modern line art"),
+    SHARP_GEOMETRIC("Sharp Geometric", "Tactical angular cut-outs and zero radii"),
+    BOLD_SOLID("Bold Solid", "High-contrast filled tactile silhouettes"),
+    CYBER_NEON("Cyber Neon", "Futuristic glowing holographic stroke with colored halo"),
+    FROSTED_GLASS("Glassmorphism", "Soft blurred translucent pill with frosted highlight"),
+    NEOMORPHIC("Neomorphic Soft", "Subtle embossed depth with dual soft shadows"),
+    RETRO_BADGE("Retro Badge", "Vintage mechanical camera stamped insignia")
+}
+
+enum class IconShapeOption(val label: String) {
+    TRANSPARENT_NONE("None / Floating"),
+    CIRCLE_GLASS("Circle Pod"),
+    ROUNDED_SQUARE("Squircle Pod"),
+    HEXAGON("Tactical Hexagon"),
+    PILL("Capsule Pill")
 }
 
 enum class TopBarAlignment(val label: String) {
@@ -115,7 +169,22 @@ data class ModeLayoutConfig(
     val showZoomCapsule: Boolean = true,
     val zoomCapsuleScale: Float = 1.0f,
     val zoomCapsuleVerticalOffsetDp: Int = 0,
-    val accentColorHex: String = "#FFD54F"
+    val accentColorHex: String = "#FFD54F",
+    // Extended text styling
+    val textColorHex: String = "#FFFFFF",
+    val fontWeightOption: FontWeightOption = FontWeightOption.SEMI_BOLD,
+    val textCaseOption: TextCaseOption = TextCaseOption.UPPERCASE,
+    val letterSpacingSp: Float = 0.5f,
+    val textShadowOption: TextShadowOption = TextShadowOption.SUBTLE_SHADOW,
+    // Extended icon styling
+    val iconStyleOption: IconStyleOption = IconStyleOption.ROUNDED_MATERIAL,
+    val iconColorHex: String = "#FFFFFF",
+    val iconShapeOption: IconShapeOption = IconShapeOption.CIRCLE_GLASS,
+    val iconContainerOpacity: Float = 0.35f,
+    val iconStrokeWidthDp: Float = 1.8f,
+    // Uploaded photo UI matching
+    val customUiPhotoUri: String? = null,
+    val customUiPhotoOverlayOpacity: Float = 0f
 ) {
     fun getComposeAccentColor(): Color {
         return try {
@@ -123,6 +192,26 @@ data class ModeLayoutConfig(
         } catch (e: Exception) {
             Color(0xFFFFD54F)
         }
+    }
+
+    fun getComposeTextColor(): Color {
+        return try {
+            Color(android.graphics.Color.parseColor(textColorHex))
+        } catch (e: Exception) {
+            Color.White
+        }
+    }
+
+    fun getComposeIconColor(): Color {
+        return try {
+            Color(android.graphics.Color.parseColor(iconColorHex))
+        } catch (e: Exception) {
+            Color.White
+        }
+    }
+
+    fun formatModeText(label: String): String {
+        return textCaseOption.format(label)
     }
 
     fun toJson(): JSONObject {
@@ -159,6 +248,19 @@ data class ModeLayoutConfig(
         json.put("zoomCapsuleScale", zoomCapsuleScale.toDouble())
         json.put("zoomCapsuleVerticalOffsetDp", zoomCapsuleVerticalOffsetDp)
         json.put("accentColorHex", accentColorHex)
+
+        json.put("textColorHex", textColorHex)
+        json.put("fontWeightOption", fontWeightOption.name)
+        json.put("textCaseOption", textCaseOption.name)
+        json.put("letterSpacingSp", letterSpacingSp.toDouble())
+        json.put("textShadowOption", textShadowOption.name)
+        json.put("iconStyleOption", iconStyleOption.name)
+        json.put("iconColorHex", iconColorHex)
+        json.put("iconShapeOption", iconShapeOption.name)
+        json.put("iconContainerOpacity", iconContainerOpacity.toDouble())
+        json.put("iconStrokeWidthDp", iconStrokeWidthDp.toDouble())
+        if (customUiPhotoUri != null) json.put("customUiPhotoUri", customUiPhotoUri)
+        json.put("customUiPhotoOverlayOpacity", customUiPhotoOverlayOpacity.toDouble())
         return json
     }
 
@@ -235,7 +337,29 @@ data class ModeLayoutConfig(
                 showZoomCapsule = json.optBoolean("showZoomCapsule", true),
                 zoomCapsuleScale = json.optDouble("zoomCapsuleScale", 1.0).toFloat(),
                 zoomCapsuleVerticalOffsetDp = json.optInt("zoomCapsuleVerticalOffsetDp", 0),
-                accentColorHex = json.optString("accentColorHex", "#FFD54F")
+                accentColorHex = json.optString("accentColorHex", "#FFD54F"),
+                textColorHex = json.optString("textColorHex", "#FFFFFF"),
+                fontWeightOption = try {
+                    FontWeightOption.valueOf(json.optString("fontWeightOption", FontWeightOption.SEMI_BOLD.name))
+                } catch (e: Exception) { FontWeightOption.SEMI_BOLD },
+                textCaseOption = try {
+                    TextCaseOption.valueOf(json.optString("textCaseOption", TextCaseOption.UPPERCASE.name))
+                } catch (e: Exception) { TextCaseOption.UPPERCASE },
+                letterSpacingSp = json.optDouble("letterSpacingSp", 0.5).toFloat(),
+                textShadowOption = try {
+                    TextShadowOption.valueOf(json.optString("textShadowOption", TextShadowOption.SUBTLE_SHADOW.name))
+                } catch (e: Exception) { TextShadowOption.SUBTLE_SHADOW },
+                iconStyleOption = try {
+                    IconStyleOption.valueOf(json.optString("iconStyleOption", IconStyleOption.ROUNDED_MATERIAL.name))
+                } catch (e: Exception) { IconStyleOption.ROUNDED_MATERIAL },
+                iconColorHex = json.optString("iconColorHex", "#FFFFFF"),
+                iconShapeOption = try {
+                    IconShapeOption.valueOf(json.optString("iconShapeOption", IconShapeOption.CIRCLE_GLASS.name))
+                } catch (e: Exception) { IconShapeOption.CIRCLE_GLASS },
+                iconContainerOpacity = json.optDouble("iconContainerOpacity", 0.35).toFloat(),
+                iconStrokeWidthDp = json.optDouble("iconStrokeWidthDp", 1.8).toFloat(),
+                customUiPhotoUri = if (json.has("customUiPhotoUri")) json.optString("customUiPhotoUri") else null,
+                customUiPhotoOverlayOpacity = json.optDouble("customUiPhotoOverlayOpacity", 0.0).toFloat()
             )
         }
     }

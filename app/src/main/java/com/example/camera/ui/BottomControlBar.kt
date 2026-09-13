@@ -71,6 +71,8 @@ fun BottomControlBar(
 ) {
     val accentColor = layoutConfig.getComposeAccentColor()
     val fontFamily = layoutConfig.modeFontFamily.toComposeFontFamily()
+    val customTextColor = layoutConfig.getComposeTextColor()
+    val customIconColor = layoutConfig.getComposeIconColor()
 
     Column(
         modifier = modifier
@@ -388,16 +390,26 @@ fun BottomControlBar(
                         ) {
                             modesToDisplay.forEach { mode ->
                                 val isSelected = if (mode == CameraMode.MORE) isMoreModeActive else (cameraMode == mode)
+                                val targetTextColor = if (isSelected) {
+                                    if (layoutConfig.modeSelectorStyle == ModeSelectorStyle.MONO_TICKER) Color(0xFFE53935)
+                                    else if (layoutConfig.modeSelectorStyle == ModeSelectorStyle.CYBER_GLOW) Color(0xFF00E5FF)
+                                    else customTextColor
+                                } else {
+                                    customTextColor.copy(alpha = 0.65f)
+                                }
                                 val textColor by animateColorAsState(
-                                    if (isSelected) accentColor else Color.White.copy(alpha = 0.65f),
+                                    targetTextColor,
                                     label = "modeTextColor"
                                 )
 
-                                val displayText = if (mode == CameraMode.MORE && isMoreModeActive && cameraMode != CameraMode.MORE) {
+                                val rawName = if (mode == CameraMode.MORE && isMoreModeActive && cameraMode != CameraMode.MORE) {
                                     cameraMode.name
                                 } else {
                                     mode.name
                                 }
+                                val displayText = layoutConfig.formatModeText(rawName)
+                                val modeFontWeight = if (isSelected) layoutConfig.fontWeightOption.weight else FontWeight.Normal
+                                val modeLetterSpacing = layoutConfig.letterSpacingSp.sp
 
                                 Column(
                                     modifier = Modifier
@@ -418,9 +430,9 @@ fun BottomControlBar(
                                                 text = displayText,
                                                 color = textColor,
                                                 fontSize = layoutConfig.modeTextSizeSp.sp,
-                                                fontWeight = if (isSelected) FontWeight.ExtraBold else FontWeight.Bold,
+                                                fontWeight = modeFontWeight,
                                                 fontFamily = fontFamily,
-                                                letterSpacing = 1.sp,
+                                                letterSpacing = modeLetterSpacing,
                                                 maxLines = 1,
                                                 softWrap = false
                                             )
@@ -443,11 +455,11 @@ fun BottomControlBar(
                                             ) {
                                                 Text(
                                                     text = displayText,
-                                                    color = if (isSelected) Color.Black else Color.White.copy(alpha = 0.65f),
+                                                    color = if (isSelected) Color.Black else customTextColor.copy(alpha = 0.65f),
                                                     fontSize = layoutConfig.modeTextSizeSp.sp,
-                                                    fontWeight = if (isSelected) FontWeight.ExtraBold else FontWeight.Bold,
+                                                    fontWeight = modeFontWeight,
                                                     fontFamily = fontFamily,
-                                                    letterSpacing = 0.5.sp,
+                                                    letterSpacing = modeLetterSpacing,
                                                     maxLines = 1,
                                                     softWrap = false,
                                                     modifier = Modifier.padding(horizontal = 10.dp, vertical = 3.dp)
@@ -457,11 +469,11 @@ fun BottomControlBar(
                                         ModeSelectorStyle.UNDERLINE -> {
                                             Text(
                                                 text = displayText,
-                                                color = if (isSelected) Color.White else Color.White.copy(alpha = 0.65f),
+                                                color = if (isSelected) customTextColor else customTextColor.copy(alpha = 0.65f),
                                                 fontSize = layoutConfig.modeTextSizeSp.sp,
-                                                fontWeight = if (isSelected) FontWeight.ExtraBold else FontWeight.Bold,
+                                                fontWeight = modeFontWeight,
                                                 fontFamily = fontFamily,
-                                                letterSpacing = 1.sp,
+                                                letterSpacing = modeLetterSpacing,
                                                 maxLines = 1,
                                                 softWrap = false
                                             )
@@ -483,9 +495,9 @@ fun BottomControlBar(
                                                 text = displayText,
                                                 color = textColor,
                                                 fontSize = layoutConfig.modeTextSizeSp.sp,
-                                                fontWeight = if (isSelected) FontWeight.Black else FontWeight.Medium,
+                                                fontWeight = modeFontWeight,
                                                 fontFamily = fontFamily,
-                                                letterSpacing = 1.sp,
+                                                letterSpacing = modeLetterSpacing,
                                                 maxLines = 1,
                                                 softWrap = false
                                             )
@@ -498,11 +510,11 @@ fun BottomControlBar(
                                             ) {
                                                 Text(
                                                     text = displayText,
-                                                    color = if (isSelected) Color.White else Color.White.copy(alpha = 0.65f),
+                                                    color = if (isSelected) customTextColor else customTextColor.copy(alpha = 0.65f),
                                                     fontSize = layoutConfig.modeTextSizeSp.sp,
-                                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                                    fontWeight = modeFontWeight,
                                                     fontFamily = fontFamily,
-                                                    letterSpacing = 0.5.sp,
+                                                    letterSpacing = modeLetterSpacing,
                                                     maxLines = 1,
                                                     softWrap = false,
                                                     modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)

@@ -184,6 +184,8 @@ fun CameraScreen(
     val isAutoHdrEnabled by viewModel.isAutoHdrEnabled.collectAsStateWithLifecycle()
     val isAiAutoFramingEnabled by viewModel.isAiAutoFramingEnabled.collectAsStateWithLifecycle()
 
+    var isCustomUiStudioOpen by remember { mutableStateOf(false) }
+
     if (cameraMode == CameraMode.AI_SUBJECT_TRACKING) {
         com.example.camera.tracking.ui.AiSubjectTrackingScreen(
             onBack = {
@@ -707,6 +709,7 @@ fun CameraScreen(
             onSaveSelfieAsPreviewedToggle = { viewModel.setSaveSelfieAsPreviewed(it) },
             onGridTypeSelected = { viewModel.setGridType(it) },
             onCinemaConfigChange = { viewModel.updateCinemaConfig(it) },
+            onOpenCustomUiStudio = { isCustomUiStudioOpen = true },
             onDismiss = {
                 viewModel.setSettingsOpen(false)
                 if (cameraMode == CameraMode.MORE) {
@@ -720,6 +723,29 @@ fun CameraScreen(
             MediaViewerDialog(
                 media = lastCapturedMedia,
                 onDismiss = { viewModel.setMediaViewerOpen(false) }
+            )
+        }
+
+        // 8. Dedicated Custom UI Studio & Simulator Page
+        if (isCustomUiStudioOpen) {
+            CustomUiStudioDialog(
+                initialConfig = activeLayoutConfig,
+                uiCustomizationState = uiCustomizationState,
+                currentCameraMode = cameraMode,
+                onDismiss = { isCustomUiStudioOpen = false },
+                onApplyToCamera = { newConfig ->
+                    viewModel.updateGlobalLayoutConfig(newConfig)
+                    viewModel.selectUiTemplate(UiTemplateType.CUSTOM)
+                    viewModel.showToast("Custom UI applied to Camera")
+                },
+                onSaveCustomPreset = { name, newConfig ->
+                    viewModel.saveCustomPreset(name, newConfig)
+                    viewModel.showToast("Preset '$name' saved")
+                },
+                onDeleteCustomPreset = { presetId ->
+                    viewModel.deleteCustomPreset(presetId)
+                    viewModel.showToast("Preset deleted")
+                }
             )
         }
     }

@@ -155,6 +155,7 @@ fun SettingsDrawer(
     onLoadCustomPreset: (CustomUiPreset) -> Unit = {},
     onDeleteCustomPreset: (String) -> Unit = {},
     onResetAllToTemplate: (UiTemplateType) -> Unit = {},
+    onOpenCustomUiStudio: () -> Unit = {},
     onDismiss: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
@@ -701,17 +702,154 @@ fun SettingsDrawer(
                             // 17. UI_CUSTOMIZATION
                             SettingsSubPage.UI_CUSTOMIZATION -> {
                                 item {
+                                    Surface(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        shape = RoundedCornerShape(16.dp),
+                                        color = Color(0xFF1E222D),
+                                        border = BorderStroke(1.5.dp, Color(0xFF2563EB))
+                                    ) {
+                                        Column(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(16.dp)
+                                        ) {
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Box(
+                                                    modifier = Modifier
+                                                        .size(42.dp)
+                                                        .clip(RoundedCornerShape(10.dp))
+                                                        .background(Color(0xFF2563EB).copy(alpha = 0.2f)),
+                                                    contentAlignment = Alignment.Center
+                                                ) {
+                                                    Icon(
+                                                        imageVector = Icons.Outlined.Smartphone,
+                                                        contentDescription = null,
+                                                        tint = Color(0xFF60A5FA),
+                                                        modifier = Modifier.size(24.dp)
+                                                    )
+                                                }
+                                                Spacer(modifier = Modifier.width(12.dp))
+                                                Column(modifier = Modifier.weight(1f)) {
+                                                    Text(
+                                                        text = "Custom UI Studio",
+                                                        fontSize = 16.sp,
+                                                        fontWeight = FontWeight.Bold,
+                                                        color = Color.White
+                                                    )
+                                                    Text(
+                                                        text = "Simulated device preview · Full text & icon styling · Upload any UI photo",
+                                                        fontSize = 11.5.sp,
+                                                        color = Color.White.copy(alpha = 0.7f)
+                                                    )
+                                                }
+                                            }
+
+                                            Spacer(modifier = Modifier.height(12.dp))
+
+                                            Button(
+                                                onClick = onOpenCustomUiStudio,
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .height(44.dp),
+                                                shape = RoundedCornerShape(10.dp),
+                                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2563EB))
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Outlined.DesignServices,
+                                                    contentDescription = null,
+                                                    tint = Color.White,
+                                                    modifier = Modifier.size(18.dp)
+                                                )
+                                                Spacer(modifier = Modifier.width(8.dp))
+                                                Text(
+                                                    text = "Open Custom UI Studio & Simulator",
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = Color.White,
+                                                    fontSize = 13.5.sp
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+
+                                item {
                                     SettingsSectionCard(title = "Camera UI Design Templates") {
                                         Text("Choose from 9 completely unique design languages:", fontSize = 12.sp, color = Color(0xFF6B7280))
                                         Spacer(modifier = Modifier.height(6.dp))
                                         UiTemplateType.entries.forEach { template ->
                                             val isSel = uiCustomizationState.selectedTemplate == template
-                                            LightOptionRow(
-                                                title = template.title,
-                                                subtitle = template.subtitle,
-                                                isSelected = isSel
-                                            ) {
-                                                onSelectTemplate(template)
+                                            if (template == UiTemplateType.CUSTOM) {
+                                                Surface(
+                                                    modifier = Modifier
+                                                        .fillMaxWidth()
+                                                        .padding(vertical = 3.dp),
+                                                    shape = RoundedCornerShape(12.dp),
+                                                    color = if (isSel) Color(0xFFEFF6FF) else Color.White,
+                                                    border = BorderStroke(
+                                                        if (isSel) 1.5.dp else 1.dp,
+                                                        if (isSel) Color(0xFF2563EB) else Color(0xFFE5E7EB)
+                                                    )
+                                                ) {
+                                                    Row(
+                                                        modifier = Modifier
+                                                            .fillMaxWidth()
+                                                            .clickable {
+                                                                onSelectTemplate(UiTemplateType.CUSTOM)
+                                                                onOpenCustomUiStudio()
+                                                            }
+                                                            .padding(horizontal = 14.dp, vertical = 12.dp),
+                                                        verticalAlignment = Alignment.CenterVertically
+                                                    ) {
+                                                        Column(modifier = Modifier.weight(1f)) {
+                                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                                                Text(
+                                                                    text = template.title,
+                                                                    fontWeight = FontWeight.Bold,
+                                                                    fontSize = 14.sp,
+                                                                    color = if (isSel) Color(0xFF1D4ED8) else Color(0xFF1F2937)
+                                                                )
+                                                                Spacer(modifier = Modifier.width(6.dp))
+                                                                Surface(
+                                                                    shape = RoundedCornerShape(4.dp),
+                                                                    color = Color(0xFF2563EB).copy(alpha = 0.15f)
+                                                                ) {
+                                                                    Text(
+                                                                        text = "STUDIO",
+                                                                        fontSize = 9.sp,
+                                                                        fontWeight = FontWeight.Bold,
+                                                                        color = Color(0xFF2563EB),
+                                                                        modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
+                                                                    )
+                                                                }
+                                                            }
+                                                            Text(
+                                                                text = template.subtitle,
+                                                                fontSize = 11.5.sp,
+                                                                color = Color(0xFF6B7280)
+                                                            )
+                                                        }
+                                                        Button(
+                                                            onClick = onOpenCustomUiStudio,
+                                                            shape = RoundedCornerShape(8.dp),
+                                                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2563EB)),
+                                                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                                                            modifier = Modifier.height(32.dp)
+                                                        ) {
+                                                            Text("Customize", fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
+                                                        }
+                                                    }
+                                                }
+                                            } else {
+                                                LightOptionRow(
+                                                    title = template.title,
+                                                    subtitle = template.subtitle,
+                                                    isSelected = isSel
+                                                ) {
+                                                    onSelectTemplate(template)
+                                                }
                                             }
                                             Spacer(modifier = Modifier.height(4.dp))
                                         }
