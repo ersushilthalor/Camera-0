@@ -61,14 +61,16 @@ fun ViewfinderHudOverlay(
     Box(modifier = modifier.fillMaxSize()) {
         when (templateType) {
             UiTemplateType.STOCK_PIXEL -> {
-                // Pixel-Style Vertical Brightness / Exposure Slider on the Right Edge (as shown in reference screenshot)
-                PixelVerticalExposureSlider(
-                    exposureCompensation = exposureCompensation,
-                    onExposureChange = onExposureChange,
-                    modifier = Modifier
-                        .align(Alignment.CenterEnd)
-                        .padding(end = 12.dp)
-                )
+                // Pixel-Style Vertical Brightness / Exposure Slider on the Right Edge (omitted in Photo mode)
+                if (cameraMode != CameraMode.PHOTO) {
+                    PixelVerticalExposureSlider(
+                        exposureCompensation = exposureCompensation,
+                        onExposureChange = onExposureChange,
+                        modifier = Modifier
+                            .align(Alignment.CenterEnd)
+                            .padding(end = 12.dp)
+                    )
+                }
             }
 
             UiTemplateType.MINIMAL_PRO -> {
@@ -88,14 +90,16 @@ fun ViewfinderHudOverlay(
                     modifier = Modifier.fillMaxSize()
                 )
 
-                // Vertical EV Dial on Right Edge
-                MinimalProEvDial(
-                    exposureCompensation = exposureCompensation,
-                    onExposureChange = onExposureChange,
-                    modifier = Modifier
-                        .align(Alignment.CenterEnd)
-                        .padding(end = 14.dp)
-                )
+                // Vertical EV Dial on Right Edge (omitted in Photo mode)
+                if (cameraMode != CameraMode.PHOTO) {
+                    MinimalProEvDial(
+                        exposureCompensation = exposureCompensation,
+                        onExposureChange = onExposureChange,
+                        modifier = Modifier
+                            .align(Alignment.CenterEnd)
+                            .padding(end = 14.dp)
+                    )
+                }
             }
 
             UiTemplateType.FUTURISTIC_GLASS -> {
@@ -104,14 +108,16 @@ fun ViewfinderHudOverlay(
                     modifier = Modifier.fillMaxSize()
                 )
 
-                // Neon Cyber Vertical Exposure Control
-                CyberExposureSlider(
-                    exposureCompensation = exposureCompensation,
-                    onExposureChange = onExposureChange,
-                    modifier = Modifier
-                        .align(Alignment.CenterEnd)
-                        .padding(end = 16.dp)
-                )
+                // Neon Cyber Vertical Exposure Control (omitted in Photo mode)
+                if (cameraMode != CameraMode.PHOTO) {
+                    CyberExposureSlider(
+                        exposureCompensation = exposureCompensation,
+                        onExposureChange = onExposureChange,
+                        modifier = Modifier
+                            .align(Alignment.CenterEnd)
+                            .padding(end = 16.dp)
+                    )
+                }
             }
 
             UiTemplateType.DSLR_PRO -> {
@@ -126,36 +132,41 @@ fun ViewfinderHudOverlay(
                         .padding(top = 60.dp)
                 )
 
-                // Right-Side Exposure Step Ladder (+3 ... 0 ... -3)
-                DslrExposureLadder(
-                    exposureCompensation = exposureCompensation,
-                    onExposureChange = onExposureChange,
-                    modifier = Modifier
-                        .align(Alignment.CenterEnd)
-                        .padding(end = 14.dp)
-                )
+                // Right-Side Exposure Step Ladder (omitted in Photo mode)
+                if (cameraMode != CameraMode.PHOTO) {
+                    DslrExposureLadder(
+                        exposureCompensation = exposureCompensation,
+                        onExposureChange = onExposureChange,
+                        modifier = Modifier
+                            .align(Alignment.CenterEnd)
+                            .padding(end = 14.dp)
+                    )
+                }
             }
 
             UiTemplateType.IMMERSIVE_EDGE -> {
-                // Edge gesture indicators: Left for Exposure, Right for Zoom
+                // Edge gesture indicators: Left for Exposure (disabled in Photo mode), Right for Zoom
                 ImmersiveEdgeControls(
                     exposureCompensation = exposureCompensation,
                     onExposureChange = onExposureChange,
                     currentZoom = currentZoom,
                     onZoomChange = onZoomChange,
+                    enableExposure = cameraMode != CameraMode.PHOTO,
                     modifier = Modifier.fillMaxSize()
                 )
             }
 
             else -> {
-                // Standard subtle vertical exposure slider on right
-                PixelVerticalExposureSlider(
-                    exposureCompensation = exposureCompensation,
-                    onExposureChange = onExposureChange,
-                    modifier = Modifier
-                        .align(Alignment.CenterEnd)
-                        .padding(end = 12.dp)
-                )
+                // Standard subtle vertical exposure slider on right (omitted in Photo mode)
+                if (cameraMode != CameraMode.PHOTO) {
+                    PixelVerticalExposureSlider(
+                        exposureCompensation = exposureCompensation,
+                        onExposureChange = onExposureChange,
+                        modifier = Modifier
+                            .align(Alignment.CenterEnd)
+                            .padding(end = 12.dp)
+                    )
+                }
             }
         }
     }
@@ -603,24 +614,27 @@ fun ImmersiveEdgeControls(
     onExposureChange: (Int) -> Unit,
     currentZoom: Float,
     onZoomChange: (Float) -> Unit,
+    enableExposure: Boolean = true,
     modifier: Modifier = Modifier
 ) {
     Box(modifier = modifier.fillMaxSize()) {
-        // Left Edge Gesture Zone for Brightness
-        Box(
-            modifier = Modifier
-                .align(Alignment.CenterStart)
-                .fillMaxHeight(0.5f)
-                .width(40.dp)
-                .pointerInput(Unit) {
-                    detectVerticalDragGestures { change, dragAmount ->
-                        change.consume()
-                        val delta = -dragAmount / 30f
-                        val newEv = (exposureCompensation + delta.roundToInt()).coerceIn(-12, 12)
-                        onExposureChange(newEv)
+        // Left Edge Gesture Zone for Brightness (omitted when enableExposure is false)
+        if (enableExposure) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.CenterStart)
+                    .fillMaxHeight(0.5f)
+                    .width(40.dp)
+                    .pointerInput(Unit) {
+                        detectVerticalDragGestures { change, dragAmount ->
+                            change.consume()
+                            val delta = -dragAmount / 30f
+                            val newEv = (exposureCompensation + delta.roundToInt()).coerceIn(-12, 12)
+                            onExposureChange(newEv)
+                        }
                     }
-                }
-        )
+            )
+        }
 
         // Right Edge Gesture Zone for Zoom
         Box(

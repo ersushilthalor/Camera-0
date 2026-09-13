@@ -248,7 +248,8 @@ fun Viewfinder(
                             isAfLocked = isAfLocked,
                             exposureCompensation = currentExposureCompensation,
                             onExposureChange = onExposureCompensationChange,
-                            onLockClick = onToggleLock
+                            onLockClick = onToggleLock,
+                            showExposureSlider = cameraMode != CameraMode.PHOTO
                         )
                     }
                 }
@@ -265,6 +266,7 @@ fun FocusRingIndicator(
     exposureCompensation: Int = 0,
     onExposureChange: (Int) -> Unit = {},
     onLockClick: () -> Unit = {},
+    showExposureSlider: Boolean = true,
     modifier: Modifier = Modifier
 ) {
     val infiniteTransition = rememberInfiniteTransition(label = "focusPulse")
@@ -344,43 +346,45 @@ fun FocusRingIndicator(
             }
         }
 
-        // Stock-Camera Sun Exposure Slider to the right of the focus ring
-        var dragAccumulator by remember { mutableFloatStateOf(0f) }
-        Box(
-            modifier = Modifier
-                .offset(x = offsetX + 78.dp, y = offsetY + 12.dp)
-                .size(width = 30.dp, height = 48.dp)
-                .clip(RoundedCornerShape(12.dp))
-                .background(Color.Black.copy(alpha = 0.5f))
-                .pointerInput(exposureCompensation) {
-                    detectTransformGestures { _, pan, _, _ ->
-                        dragAccumulator -= pan.y
-                        if (dragAccumulator > 25f) {
-                            onExposureChange((exposureCompensation + 1).coerceAtMost(4))
-                            dragAccumulator = 0f
-                        } else if (dragAccumulator < -25f) {
-                            onExposureChange((exposureCompensation - 1).coerceAtLeast(-4))
-                            dragAccumulator = 0f
+        // Stock-Camera Sun Exposure Slider to the right of the focus ring (omitted in Photo mode)
+        if (showExposureSlider) {
+            var dragAccumulator by remember { mutableFloatStateOf(0f) }
+            Box(
+                modifier = Modifier
+                    .offset(x = offsetX + 78.dp, y = offsetY + 12.dp)
+                    .size(width = 30.dp, height = 48.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(Color.Black.copy(alpha = 0.5f))
+                    .pointerInput(exposureCompensation) {
+                        detectTransformGestures { _, pan, _, _ ->
+                            dragAccumulator -= pan.y
+                            if (dragAccumulator > 25f) {
+                                onExposureChange((exposureCompensation + 1).coerceAtMost(4))
+                                dragAccumulator = 0f
+                            } else if (dragAccumulator < -25f) {
+                                onExposureChange((exposureCompensation - 1).coerceAtLeast(-4))
+                                dragAccumulator = 0f
+                            }
                         }
-                    }
-                },
-            contentAlignment = Alignment.Center
-        ) {
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.Center
+                    },
+                contentAlignment = Alignment.Center
             ) {
-                Text(
-                    text = "☀️",
-                    fontSize = 14.sp
-                )
-                if (exposureCompensation != 0) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center
+                ) {
                     Text(
-                        text = if (exposureCompensation > 0) "+$exposureCompensation" else "$exposureCompensation",
-                        color = Color(0xFFFFD54F),
-                        fontSize = 9.sp,
-                        fontWeight = FontWeight.Bold
+                        text = "☀️",
+                        fontSize = 14.sp
                     )
+                    if (exposureCompensation != 0) {
+                        Text(
+                            text = if (exposureCompensation > 0) "+$exposureCompensation" else "$exposureCompensation",
+                            color = Color(0xFFFFD54F),
+                            fontSize = 9.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
                 }
             }
         }

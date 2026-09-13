@@ -118,6 +118,7 @@ fun CameraScreen(
     val isPortraitSettingsOpen by viewModel.isPortraitSettingsOpen.collectAsStateWithLifecycle()
     val saveSelfieAsPreviewed by viewModel.saveSelfieAsPreviewed.collectAsStateWithLifecycle()
     val photoMegapixelMode by viewModel.photoMegapixelMode.collectAsStateWithLifecycle()
+    val isRefocusPhotoEnabled by viewModel.isRefocusPhotoEnabled.collectAsStateWithLifecycle()
     val isVideoSettingsPanelOpen by viewModel.isVideoSettingsPanelOpen.collectAsStateWithLifecycle()
 
     val cinemaConfig by viewModel.cinemaConfig.collectAsStateWithLifecycle()
@@ -183,6 +184,10 @@ fun CameraScreen(
     val thermalProtection by viewModel.thermalProtection.collectAsStateWithLifecycle()
     val isAutoHdrEnabled by viewModel.isAutoHdrEnabled.collectAsStateWithLifecycle()
     val isAiAutoFramingEnabled by viewModel.isAiAutoFramingEnabled.collectAsStateWithLifecycle()
+    val isAiZoomEnabled by viewModel.isAiZoomEnabled.collectAsStateWithLifecycle()
+    val aiZoomQuality by viewModel.aiZoomQuality.collectAsStateWithLifecycle()
+    val isAiZoomProcessing by viewModel.isAiZoomProcessing.collectAsStateWithLifecycle()
+    val aiZoomProgress by viewModel.aiZoomProgress.collectAsStateWithLifecycle()
 
     var isCustomUiStudioOpen by remember { mutableStateOf(false) }
 
@@ -302,6 +307,37 @@ fun CameraScreen(
             capabilities = capabilities,
             modifier = Modifier.fillMaxSize()
         )
+
+        // Subtle AI Zoom background processing pill (non-blocking, no permanent screen icon)
+        if (isAiZoomProcessing) {
+            Surface(
+                shape = RoundedCornerShape(16.dp),
+                color = Color(0xCC111827),
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .padding(top = 74.dp)
+                    .testTag("ai_zoom_processing_indicator")
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    CircularProgressIndicator(
+                        progress = { aiZoomProgress },
+                        modifier = Modifier.size(13.dp),
+                        color = Color(0xFF60A5FA),
+                        strokeWidth = 2.dp
+                    )
+                    Text(
+                        text = "AI Zoom Enhancing ${(aiZoomProgress * 100).toInt()}%",
+                        color = Color.White,
+                        fontSize = 11.5.sp,
+                        fontWeight = FontWeight.Medium
+                    )
+                }
+            }
+        }
 
         // 2. Top Controls
         TopControlBar(
@@ -624,6 +660,9 @@ fun CameraScreen(
             selectedPhotoResolution = selectedPhotoResolution,
             selectedVideoResolution = selectedVideoResolution,
             photoMegapixelMode = photoMegapixelMode,
+            isRefocusPhotoEnabled = isRefocusPhotoEnabled,
+            isAiZoomEnabled = isAiZoomEnabled,
+            aiZoomQuality = aiZoomQuality,
             videoFps = videoFps,
             videoBitrate = videoBitrate,
             isVideoStabilizationEnabled = isVideoStabilizationEnabled,
@@ -696,6 +735,9 @@ fun CameraScreen(
             onForceDeepScan = { viewModel.forceDeepScanLenses() },
             onPhotoResolutionSelected = { viewModel.selectPhotoResolution(it) },
             onPhotoMegapixelModeSelected = { viewModel.setPhotoMegapixelMode(it) },
+            onRefocusPhotoToggle = { viewModel.setRefocusPhotoEnabled(it) },
+            onAiZoomToggle = { viewModel.setAiZoomEnabled(it) },
+            onAiZoomQualitySelect = { viewModel.setAiZoomQuality(it) },
             onVideoResolutionSelected = { viewModel.selectVideoResolution(it) },
             onViewfinderResolutionSelected = { viewModel.setViewfinderResolution(it) },
             onVideoFpsSelected = { viewModel.setVideoFps(it) },

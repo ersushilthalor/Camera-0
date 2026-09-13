@@ -218,7 +218,16 @@ class Camera2Engine(private val context: Context) {
     val cinemaCapabilities: StateFlow<CinemaHardwareCapabilities> = _cinemaCapabilities.asStateFlow()
 
     val ultraRes50MStacker = UltraRes50MStacker(context)
+    val refocusEngine = RefocusEngine(context)
+    val dbsrEngine = com.example.camera.dbsr.DbsrEngine(context)
     var photoMegapixelMode: PhotoMegapixelMode = PhotoMegapixelMode.M12
+    var isRefocusPhotoEnabled: Boolean = false
+    var isAiZoomEnabled: Boolean = false
+    var aiZoomQuality: com.example.camera.dbsr.AiZoomQuality = com.example.camera.dbsr.AiZoomQuality.AUTO
+    private val _isAiZoomProcessing = MutableStateFlow(false)
+    val isAiZoomProcessing: StateFlow<Boolean> = _isAiZoomProcessing.asStateFlow()
+    private val _aiZoomProgress = MutableStateFlow(0f)
+    val aiZoomProgress: StateFlow<Float> = _aiZoomProgress.asStateFlow()
 
     init {
         videoHdrEngine.onStateChangedListener = { state ->
@@ -1227,25 +1236,25 @@ class Camera2Engine(private val context: Context) {
                 photoRes.width,
                 photoRes.height,
                 ImageFormat.JPEG,
-                2
+                4
             )
         } catch (t: Throwable) {
             Log.e(TAG, "Failed to create ImageReader with ${photoRes.width}x${photoRes.height}, falling back to 1080p", t)
             try {
-                imageReaderJpeg = ImageReader.newInstance(1920, 1080, ImageFormat.JPEG, 2)
+                imageReaderJpeg = ImageReader.newInstance(1920, 1080, ImageFormat.JPEG, 4)
             } catch (t2: Throwable) {
                 Log.e(TAG, "Failed fallback ImageReader", t2)
             }
         }
 
-        if (caps.supportsRaw && isRawCaptureEnabled && caps.supportedRawResolutions.isNotEmpty()) {
+        if (caps.supportsRaw && (isRawCaptureEnabled || isAiZoomEnabled) && caps.supportedRawResolutions.isNotEmpty()) {
             val rawRes = caps.supportedRawResolutions.first()
             try {
                 imageReaderRaw = ImageReader.newInstance(
                     rawRes.width,
                     rawRes.height,
                     ImageFormat.RAW_SENSOR,
-                    2
+                    6
                 )
             } catch (t: Throwable) {
                 Log.e(TAG, "Failed to create RAW ImageReader", t)
@@ -2291,6 +2300,16 @@ class Camera2Engine(private val context: Context) {
             return
         }
 
+        if (isRefocusPhotoEnabled && currentMode == CameraMode.PHOTO) {
+            takePhotoRefocus(onComplete)
+            return
+        }
+
+        if (isAiZoomEnabled && currentMode == CameraMode.PHOTO) {
+            takePhotoAiZoom(onComplete)
+            return
+        }
+
         val camera = cameraDevice ?: return
         val session = captureSession ?: return
         val readerJpeg = imageReaderJpeg ?: return
@@ -2358,6 +2377,386 @@ class Camera2Engine(private val context: Context) {
             Log.e(TAG, "Error taking photo", e)
             _isCapturing.value = false
             onComplete(null)
+        }
+    }
+
+    /**
+     * Refocus Photo Capture:
+     * When Refocus Photo is enabled, captures a short sequence of 3 focus planes:
+     * Near (macro/foreground) -> Mid (subject/user focus) -> Far (background/infinity).
+     *
+     * - The subject/mid plane is immediately saved and presented as the normal photo preview
+     *   to ensure zero shutter lag or preview stall.
+     * - Sequential/tiled depth map generation and permanent bundling is handled in the
+     *   background thread without keeping all full-resolution frames in RAM simultaneously.
+     * - If burst capture or refocus processing fails, it automatically falls back to saving
+     *   the normal photo without failing capture.
+     */
+    private fun takePhotoRefocus(onComplete: (Uri?) -> Unit) {
+        val camera = cameraDevice
+        val session = captureSession
+        val readerJpeg = imageReaderJpeg
+        if (camera == null || session == null || readerJpeg == null) {
+            takePhoto(onComplete)
+            return
+        }
+
+        _isCapturing.value = true
+
+        val lens = _selectedLens.value
+        val chars = if (lens != null) getCharacteristics(lens.cameraId) else null
+        val minFocusDist = chars?.get(CameraCharacteristics.LENS_INFO_MINIMUM_FOCUS_DISTANCE) ?: 0f
+
+        // If camera lens is fixed-focus (minFocusDist <= 0.05f), it cannot physically shift focus planes,
+        // so fallback to standard single photo capture safely.
+        if (minFocusDist <= 0.05f) {
+            takePhoto(onComplete)
+            return
+        }
+
+        val lastFocusDiopters = lastCaptureResult?.get(CaptureResult.LENS_FOCUS_DISTANCE)
+            ?: (minFocusDist * 0.35f)
+
+        // Focus planes: Near -> Mid (Subject) -> Far
+        val nearDiopters = (lastFocusDiopters + minFocusDist * 0.35f).coerceIn(0.1f, minFocusDist)
+        val midDiopters = lastFocusDiopters.coerceIn(0f, minFocusDist)
+        val farDiopters = (lastFocusDiopters * 0.25f).coerceIn(0f, minFocusDist)
+
+        val tempNearFile = File(context.cacheDir, "refocus_tmp_near_${System.currentTimeMillis()}.jpg")
+        val tempMidFile = File(context.cacheDir, "refocus_tmp_mid_${System.currentTimeMillis()}.jpg")
+        val tempFarFile = File(context.cacheDir, "refocus_tmp_far_${System.currentTimeMillis()}.jpg")
+
+        var savedNormalUri: Uri? = null
+        var framesReceived = 0
+        val isCompleted = java.util.concurrent.atomic.AtomicBoolean(false)
+
+        readerJpeg.setOnImageAvailableListener({ reader ->
+            val image = reader.acquireNextImage() ?: return@setOnImageAvailableListener
+            val buffer = image.planes[0].buffer
+            val bytes = ByteArray(buffer.remaining())
+            buffer.get(bytes)
+            image.close() // Close Image immediately to free Camera2 buffer pool
+
+            val frameIndex = synchronized(this) { framesReceived++ }
+            when (frameIndex) {
+                0 -> {
+                    // Near plane
+                    try { tempNearFile.writeBytes(bytes) } catch (e: Exception) { Log.w(TAG, "Failed writing tempNear", e) }
+                }
+                1 -> {
+                    // Mid plane (Subject) - save immediately as normal photo
+                    try { tempMidFile.writeBytes(bytes) } catch (e: Exception) { Log.w(TAG, "Failed writing tempMid", e) }
+                    engineScope.launch(Dispatchers.IO) {
+                        try {
+                            val uri = saveJpegBytesToMediaStore(bytes)
+                            savedNormalUri = uri
+                            _isCapturing.value = false
+                            updateStorageStats()
+                            if (isCompleted.compareAndSet(false, true)) {
+                                withContext(Dispatchers.Main) {
+                                    onComplete(uri)
+                                }
+                            }
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Error saving mid plane JPEG", e)
+                        }
+                    }
+                }
+                2 -> {
+                    // Far plane
+                    try { tempFarFile.writeBytes(bytes) } catch (e: Exception) { Log.w(TAG, "Failed writing tempFar", e) }
+                    // Reset listener
+                    readerJpeg.setOnImageAvailableListener(null, null)
+
+                    // Launch background Refocus bundle processing
+                    engineScope.launch(Dispatchers.Default) {
+                        val uri = savedNormalUri
+                        if (uri != null) {
+                            refocusEngine.processAndPersist(
+                                photoUri = uri,
+                                tempNearFile = tempNearFile,
+                                tempMidFile = tempMidFile,
+                                tempFarFile = tempFarFile,
+                                nearDiopters = nearDiopters,
+                                midDiopters = midDiopters,
+                                farDiopters = farDiopters
+                            )
+                        } else {
+                            tempNearFile.delete()
+                            tempMidFile.delete()
+                            tempFarFile.delete()
+                        }
+                    }
+                }
+                else -> {
+                    // Extra frame if any
+                }
+            }
+        }, backgroundHandler)
+
+        try {
+            val requests = mutableListOf<CaptureRequest>()
+
+            // Plane 1: Near
+            val reqNear = camera.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE).apply {
+                addTarget(readerJpeg.surface)
+                applyCommonSettings(this)
+                set(CaptureRequest.JPEG_ORIENTATION, getCaptureJpegOrientation())
+                set(CaptureRequest.JPEG_QUALITY, 95.toByte())
+                set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_OFF)
+                set(CaptureRequest.LENS_FOCUS_DISTANCE, nearDiopters)
+            }
+            requests.add(reqNear.build())
+
+            // Plane 2: Mid (Subject)
+            val reqMid = camera.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE).apply {
+                addTarget(readerJpeg.surface)
+                applyCommonSettings(this)
+                set(CaptureRequest.JPEG_ORIENTATION, getCaptureJpegOrientation())
+                set(CaptureRequest.JPEG_QUALITY, 98.toByte())
+                set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_OFF)
+                set(CaptureRequest.LENS_FOCUS_DISTANCE, midDiopters)
+            }
+            requests.add(reqMid.build())
+
+            // Plane 3: Far
+            val reqFar = camera.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE).apply {
+                addTarget(readerJpeg.surface)
+                applyCommonSettings(this)
+                set(CaptureRequest.JPEG_ORIENTATION, getCaptureJpegOrientation())
+                set(CaptureRequest.JPEG_QUALITY, 95.toByte())
+                set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_OFF)
+                set(CaptureRequest.LENS_FOCUS_DISTANCE, farDiopters)
+            }
+            requests.add(reqFar.build())
+
+            session.captureBurst(requests, object : CameraCaptureSession.CaptureCallback() {
+                override fun onCaptureCompleted(
+                    session: CameraCaptureSession,
+                    request: CaptureRequest,
+                    result: TotalCaptureResult
+                ) {
+                    Log.d(TAG, "Refocus burst plane completed")
+                }
+                override fun onCaptureFailed(
+                    session: CameraCaptureSession,
+                    request: CaptureRequest,
+                    failure: CaptureFailure
+                ) {
+                    Log.w(TAG, "Refocus burst plane failed: ${failure.reason}")
+                }
+            }, backgroundHandler)
+
+            // Watchdog fallback: in case burst fails or frame 1 is missed, ensure normal photo is saved
+            engineScope.launch {
+                delay(3500)
+                if (isCompleted.compareAndSet(false, true)) {
+                    Log.w(TAG, "Refocus watchdog triggered fallback")
+                    readerJpeg.setOnImageAvailableListener(null, null)
+                    _isCapturing.value = false
+                    // If we got at least one frame saved in temp files, save it as fallback
+                    var fallbackUri: Uri? = null
+                    val candidate = if (tempMidFile.exists() && tempMidFile.length() > 0) tempMidFile
+                        else if (tempNearFile.exists() && tempNearFile.length() > 0) tempNearFile
+                        else if (tempFarFile.exists() && tempFarFile.length() > 0) tempFarFile else null
+                    if (candidate != null) {
+                        try {
+                            fallbackUri = saveJpegBytesToMediaStore(candidate.readBytes())
+                        } catch (e: Exception) { Log.e(TAG, "Fallback save error", e) }
+                    }
+                    tempNearFile.delete(); tempMidFile.delete(); tempFarFile.delete()
+                    withContext(Dispatchers.Main) {
+                        onComplete(fallbackUri)
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed submitting refocus burst, falling back to standard capture", e)
+            tempNearFile.delete(); tempMidFile.delete(); tempFarFile.delete()
+            takePhoto(onComplete)
+        }
+    }
+
+    /**
+     * AI Zoom Capture using Deep Burst Super-Resolution (DBSR).
+     *
+     * Captures a rapid burst of frames (preferring RAW Bayer sensor frames when supported)
+     * with fixed AE/AWB/focus locks to prevent inter-frame exposure/color drift.
+     * The first frame is immediately saved and returned to UI to guarantee instant user feedback.
+     * DBSR optical flow alignment (PWC-Net), residual feature encoding, attention merging, and
+     * 4x sub-pixel super-resolution are executed asynchronously in the background.
+     */
+    private fun takePhotoAiZoom(onComplete: (Uri?) -> Unit) {
+        val camera = cameraDevice
+        val session = captureSession
+        val readerJpeg = imageReaderJpeg
+        if (camera == null || session == null || readerJpeg == null) {
+            takePhoto(onComplete)
+            return
+        }
+
+        _isCapturing.value = true
+        val quality = aiZoomQuality
+        val burstCount = quality.burstCount
+        val caps = _capabilities.value
+        val hasRaw = caps.supportsRaw && imageReaderRaw != null
+        val readerRaw = imageReaderRaw
+
+        // Calculate digital zoom crop region
+        val activePhotoRes = _selectedPhotoResolution.value ?: caps.supportedPhotoResolutions.firstOrNull()?.let { CameraResolution(it.width, it.height) }
+        val sensorW = activePhotoRes?.width ?: 4032
+        val sensorH = activePhotoRes?.height ?: 3024
+
+        val zoomRatio = currentZoom.coerceAtLeast(1.0f)
+        val cropW = (sensorW / zoomRatio).toInt().coerceAtLeast(64)
+        val cropH = (sensorH / zoomRatio).toInt().coerceAtLeast(64)
+        val cropX = (sensorW - cropW) / 2
+        val cropY = (sensorH - cropH) / 2
+        val zoomCropRect = Rect(cropX, cropY, cropX + cropW, cropY + cropH)
+        val rotationDeg = getCaptureJpegOrientation()
+
+        val capturedTensors = mutableListOf<com.example.camera.dbsr.Tensor>()
+        var baseRawTensor: com.example.camera.dbsr.Tensor? = null
+        val isFirstSaved = java.util.concurrent.atomic.AtomicBoolean(false)
+
+        readerJpeg.setOnImageAvailableListener({ reader ->
+            val image = reader.acquireNextImage() ?: return@setOnImageAvailableListener
+            val buffer = image.planes[0].buffer
+            val bytes = ByteArray(buffer.remaining())
+            buffer.get(bytes)
+            image.close()
+
+            engineScope.launch(Dispatchers.IO) {
+                // Instantly save base frame to MediaStore so user UI never freezes
+                if (isFirstSaved.compareAndSet(false, true)) {
+                    val baseUri = saveJpegBytesToMediaStore(bytes)
+                    _isCapturing.value = false
+                    withContext(Dispatchers.Main) {
+                        onComplete(baseUri)
+                    }
+
+                    val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                    if (bitmap != null) {
+                        val tensor = dbsrEngine.extractTensorFromBitmap(bitmap, zoomCropRect)
+                        synchronized(capturedTensors) {
+                            if (baseRawTensor == null) baseRawTensor = tensor
+                            capturedTensors.add(tensor)
+                        }
+                    }
+                } else if (!hasRaw) {
+                    val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                    if (bitmap != null) {
+                        val tensor = dbsrEngine.extractTensorFromBitmap(bitmap, zoomCropRect)
+                        synchronized(capturedTensors) {
+                            capturedTensors.add(tensor)
+                        }
+                    }
+                }
+
+                val currentTotal = synchronized(capturedTensors) { capturedTensors.size }
+                if (currentTotal >= burstCount) {
+                    launchDbsrProcessing(capturedTensors, baseRawTensor, rotationDeg, quality)
+                }
+            }
+        }, backgroundHandler)
+
+        if (hasRaw && readerRaw != null) {
+            readerRaw.setOnImageAvailableListener({ reader ->
+                val rawImage = reader.acquireNextImage() ?: return@setOnImageAvailableListener
+                engineScope.launch(Dispatchers.IO) {
+                    try {
+                        val rawTensor = dbsrEngine.extractBayerTensorFromRaw(rawImage, zoomCropRect)
+                        synchronized(capturedTensors) {
+                            if (baseRawTensor == null) baseRawTensor = rawTensor
+                            capturedTensors.add(rawTensor)
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Error extracting RAW Bayer tensor", e)
+                    } finally {
+                        rawImage.close()
+                    }
+
+                    val currentTotal = synchronized(capturedTensors) { capturedTensors.size }
+                    if (currentTotal >= burstCount) {
+                        launchDbsrProcessing(capturedTensors, baseRawTensor, rotationDeg, quality)
+                    }
+                }
+            }, backgroundHandler)
+        }
+
+        try {
+            val requests = mutableListOf<CaptureRequest>()
+            for (i in 0 until burstCount) {
+                val builder = camera.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE)
+                applyCommonSettings(builder)
+
+                // Reuse camera AE, AWB, and focus state across the burst
+                builder.set(CaptureRequest.CONTROL_AE_LOCK, true)
+                builder.set(CaptureRequest.CONTROL_AWB_LOCK, true)
+                builder.set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE)
+                builder.set(CaptureRequest.JPEG_ORIENTATION, rotationDeg)
+                builder.set(CaptureRequest.JPEG_QUALITY, 98.toByte())
+
+                builder.addTarget(readerJpeg.surface)
+                if (hasRaw && readerRaw != null) {
+                    builder.addTarget(readerRaw.surface)
+                }
+                requests.add(builder.build())
+            }
+
+            session.captureBurst(requests, object : CameraCaptureSession.CaptureCallback() {
+                override fun onCaptureCompleted(
+                    session: CameraCaptureSession,
+                    request: CaptureRequest,
+                    result: TotalCaptureResult
+                ) {
+                    Log.d(TAG, "AI Zoom burst frame completed")
+                }
+            }, backgroundHandler)
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Error executing AI Zoom capture burst", e)
+            _isCapturing.value = false
+            takePhoto(onComplete)
+        }
+    }
+
+    private fun launchDbsrProcessing(
+        burstTensors: List<com.example.camera.dbsr.Tensor>,
+        baseRaw: com.example.camera.dbsr.Tensor?,
+        rotationDeg: Int,
+        quality: com.example.camera.dbsr.AiZoomQuality
+    ) {
+        engineScope.launch(Dispatchers.Default) {
+            try {
+                _isAiZoomProcessing.value = true
+                _aiZoomProgress.value = 0.05f
+
+                val base = baseRaw ?: burstTensors.firstOrNull() ?: return@launch
+                val frames = burstTensors.take(quality.burstCount)
+
+                val enhancedBitmap = dbsrEngine.processBurst(
+                    burstFrames = frames,
+                    baseRawTensor = base,
+                    rotationDegrees = rotationDeg,
+                    quality = quality,
+                    onProgress = { p -> _aiZoomProgress.value = p }
+                )
+
+                val enhancedUri = dbsrEngine.saveAiZoomImageToMediaStore(enhancedBitmap)
+                enhancedBitmap.recycle()
+
+                updateStorageStats()
+                _isAiZoomProcessing.value = false
+                _aiZoomProgress.value = 1.0f
+
+                withContext(Dispatchers.Main) {
+                    android.widget.Toast.makeText(context, "AI Zoom (DBSR) complete", android.widget.Toast.LENGTH_SHORT).show()
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "DBSR enhancement failed, preserved base photo", e)
+                _isAiZoomProcessing.value = false
+            }
         }
     }
 
@@ -3254,7 +3653,10 @@ class Camera2Engine(private val context: Context) {
         val buffer = image.planes[0].buffer
         val bytes = ByteArray(buffer.remaining())
         buffer.get(bytes)
+        return saveJpegBytesToMediaStore(bytes)
+    }
 
+    private fun saveJpegBytesToMediaStore(bytes: ByteArray): Uri? {
         val activeLens = _selectedLens.value
         val isFrontFacing = activeLens?.facing == CameraCharacteristics.LENS_FACING_FRONT
 

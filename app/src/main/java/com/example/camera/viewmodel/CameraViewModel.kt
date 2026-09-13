@@ -155,6 +155,49 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     private val _photoMegapixelMode = MutableStateFlow(preferences.photoMegapixelMode)
     val photoMegapixelMode: StateFlow<PhotoMegapixelMode> = _photoMegapixelMode.asStateFlow()
 
+    // Refocus Photo Mode
+    private val _isRefocusPhotoEnabled = MutableStateFlow(preferences.isRefocusPhotoEnabled)
+    val isRefocusPhotoEnabled: StateFlow<Boolean> = _isRefocusPhotoEnabled.asStateFlow()
+
+    // AI Zoom (Deep Burst Super-Resolution)
+    private val _isAiZoomEnabled = MutableStateFlow(preferences.isAiZoomEnabled)
+    val isAiZoomEnabled: StateFlow<Boolean> = _isAiZoomEnabled.asStateFlow()
+
+    private val _aiZoomQuality = MutableStateFlow(preferences.aiZoomQuality)
+    val aiZoomQuality: StateFlow<com.example.camera.dbsr.AiZoomQuality> = _aiZoomQuality.asStateFlow()
+
+    val isAiZoomProcessing: StateFlow<Boolean> = engine.isAiZoomProcessing
+    val aiZoomProgress: StateFlow<Float> = engine.aiZoomProgress
+
+    fun setAiZoomEnabled(enabled: Boolean) {
+        _isAiZoomEnabled.value = enabled
+        preferences.isAiZoomEnabled = enabled
+        engine.isAiZoomEnabled = enabled
+        if (enabled) {
+            showToast("AI Zoom (DBSR): ON")
+        } else {
+            showToast("AI Zoom (DBSR): OFF")
+        }
+    }
+
+    fun setAiZoomQuality(quality: com.example.camera.dbsr.AiZoomQuality) {
+        _aiZoomQuality.value = quality
+        preferences.aiZoomQuality = quality
+        engine.aiZoomQuality = quality
+        showToast("AI Zoom Quality: ${quality.label}")
+    }
+
+    fun setRefocusPhotoEnabled(enabled: Boolean) {
+        _isRefocusPhotoEnabled.value = enabled
+        preferences.isRefocusPhotoEnabled = enabled
+        engine.isRefocusPhotoEnabled = enabled
+        if (enabled) {
+            showToast("Refocus Photo: ON")
+        } else {
+            showToast("Refocus Photo: OFF")
+        }
+    }
+
     fun setPhotoMegapixelMode(mode: PhotoMegapixelMode) {
         _photoMegapixelMode.value = mode
         preferences.photoMegapixelMode = mode
@@ -308,6 +351,9 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         engine.saveSelfieAsPreviewed = preferences.saveSelfieAsPreviewed
         engine.viewfinderResolution = preferences.viewfinderResolution
         engine.photoMegapixelMode = preferences.photoMegapixelMode
+        engine.isRefocusPhotoEnabled = preferences.isRefocusPhotoEnabled
+        engine.isAiZoomEnabled = preferences.isAiZoomEnabled
+        engine.aiZoomQuality = preferences.aiZoomQuality
         // Video HDR system removed: permanently OFF
         engine.setVideoHdrMode(VideoHdrMode.OFF)
         engine.setMode(preferences.cameraMode)

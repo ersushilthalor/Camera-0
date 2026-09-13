@@ -36,6 +36,7 @@ import com.example.camera.model.*
 enum class SettingsSubPage(val title: String, val subtitle: String, val icon: ImageVector) {
     CAMERA("Camera", "General preferences, selfie mirror & sounds", Icons.Outlined.Camera),
     PHOTO("Photo", "Megapixel mode, RAW sensor, JPEG quality & filters", Icons.Outlined.CameraAlt),
+    FEATURES("Features", "AI Zoom, computational super-resolution & smart capture", Icons.Outlined.AutoAwesome),
     VIDEO("Video", "Quality presets, stabilization, frame rates & bitrates", Icons.Outlined.Videocam),
     CINEMA("Cinema", "10-bit HLG, Flat Log, zebra stripes & waveforms", Icons.Outlined.MovieCreation),
     LENS("Lens", "Multi-lens switching, focal lengths & aux scan", Icons.Outlined.CenterFocusStrong),
@@ -70,6 +71,9 @@ fun SettingsDrawer(
     selectedPhotoResolution: CameraResolution?,
     selectedVideoResolution: CameraResolution?,
     photoMegapixelMode: PhotoMegapixelMode = PhotoMegapixelMode.M12,
+    isRefocusPhotoEnabled: Boolean = false,
+    isAiZoomEnabled: Boolean = false,
+    aiZoomQuality: com.example.camera.dbsr.AiZoomQuality = com.example.camera.dbsr.AiZoomQuality.AUTO,
     videoFps: Int = 30,
     videoBitrate: VideoBitrateOption = VideoBitrateOption.AUTO,
     isVideoStabilizationEnabled: Boolean = true,
@@ -110,6 +114,9 @@ fun SettingsDrawer(
     onForceDeepScan: () -> Unit = {},
     onPhotoResolutionSelected: (CameraResolution) -> Unit = {},
     onPhotoMegapixelModeSelected: (PhotoMegapixelMode) -> Unit = {},
+    onRefocusPhotoToggle: (Boolean) -> Unit = {},
+    onAiZoomToggle: (Boolean) -> Unit = {},
+    onAiZoomQualitySelect: (com.example.camera.dbsr.AiZoomQuality) -> Unit = {},
     onVideoResolutionSelected: (CameraResolution) -> Unit = {},
     onViewfinderResolutionSelected: (ViewfinderResolution) -> Unit = {},
     onVideoFpsSelected: (Int) -> Unit = {},
@@ -281,7 +288,11 @@ fun SettingsDrawer(
                             item(key = page.name) {
                                 val summary = when (page) {
                                     SettingsSubPage.CAMERA -> if (saveSelfieAsPreviewed) "Mirror On · $shutterFeedback" else "Standard · $shutterFeedback"
-                                    SettingsSubPage.PHOTO -> if (photoMegapixelMode == PhotoMegapixelMode.M50) "50MP Ultra · JPEG $jpegQuality%" else "12MP Standard · JPEG $jpegQuality%"
+                                    SettingsSubPage.PHOTO -> {
+                                        val refocusTag = if (isRefocusPhotoEnabled) " · Refocus ON" else ""
+                                        if (photoMegapixelMode == PhotoMegapixelMode.M50) "50MP Ultra$refocusTag · JPEG $jpegQuality%" else "12MP Standard$refocusTag · JPEG $jpegQuality%"
+                                    }
+                                    SettingsSubPage.FEATURES -> if (isAiZoomEnabled) "AI Zoom ON · ${aiZoomQuality.label} Quality" else "AI Zoom OFF · Deep Burst SR"
                                     SettingsSubPage.VIDEO -> "${selectedVideoResolution?.let { "${it.width}x${it.height}" } ?: "4K"} · ${videoFps}fps · $videoCodec"
                                     SettingsSubPage.CINEMA -> "${cinemaConfig.colorProfile.label} · ${cinemaConfig.logBitDepth.label}"
                                     SettingsSubPage.LENS -> "${availableLenses.size} lenses available · Deep Scan"
@@ -356,6 +367,13 @@ fun SettingsDrawer(
                                 item {
                                     SettingsSectionCard(title = "Photo Capture & Quality") {
                                         LightToggleRow(
+                                            title = "Refocus Photo",
+                                            subtitle = "Multi-plane capture for interactive post-capture focus & 3D parallax",
+                                            isChecked = isRefocusPhotoEnabled,
+                                            onToggle = { onRefocusPhotoToggle(!isRefocusPhotoEnabled) }
+                                        )
+                                        HorizontalDivider(color = Color(0xFFF3F4F6), thickness = 1.dp)
+                                        LightToggleRow(
                                             title = "50MP Computational Mode",
                                             subtitle = "Single-frame native sensor capture with detail synthesis",
                                             isChecked = photoMegapixelMode == PhotoMegapixelMode.M50,
@@ -391,7 +409,156 @@ fun SettingsDrawer(
                                 }
                             }
 
-                            // 3. VIDEO
+                            // 3. FEATURES (AI Zoom - Deep Burst Super-Resolution)
+                            SettingsSubPage.FEATURES -> {
+                                item {
+                                    SettingsSectionCard(title = "AI Zoom (Deep Burst Super-Resolution)") {
+                                        LightToggleRow(
+                                            title = "AI Zoom",
+                                            subtitle = "Reconstructs ultra-fine detail on zoomed subjects using the Deep Burst Super-Resolution neural network",
+                                            isChecked = isAiZoomEnabled
+                                        ) {
+                                            onAiZoomToggle(!isAiZoomEnabled)
+                                        }
+
+                                        if (isAiZoomEnabled) {
+                                            Spacer(modifier = Modifier.height(10.dp))
+                                            HorizontalDivider(color = Color(0xFFF3F4F6), thickness = 1.dp)
+                                            Spacer(modifier = Modifier.height(8.dp))
+
+                                            Text(
+                                                text = "Processing Quality",
+                                                fontSize = 13.5.sp,
+                                                fontWeight = FontWeight.SemiBold,
+                                                color = Color(0xFF1F2937)
+                                            )
+                                            Text(
+                                                text = "Auto captures a rapid 3-frame burst for low latency; High captures a 5-frame deep burst for maximal detail.",
+                                                fontSize = 11.5.sp,
+                                                color = Color(0xFF6B7280)
+                                            )
+                                            Spacer(modifier = Modifier.height(8.dp))
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                            ) {
+                                                com.example.camera.dbsr.AiZoomQuality.entries.forEach { q ->
+                                                    LightSelectPill(
+                                                        label = q.label,
+                                                        isSelected = aiZoomQuality == q,
+                                                        onClick = { onAiZoomQualitySelect(q) },
+                                                        modifier = Modifier.weight(1f)
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                item {
+                                    SettingsSectionCard(title = "DBSR Neural Architecture") {
+                                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Text(
+                                                    text = "Optical Flow Alignment",
+                                                    fontSize = 13.sp,
+                                                    fontWeight = FontWeight.SemiBold,
+                                                    color = Color(0xFF1F2937)
+                                                )
+                                                Surface(
+                                                    shape = RoundedCornerShape(4.dp),
+                                                    color = Color(0xFFEFF6FF)
+                                                ) {
+                                                    Text(
+                                                        text = "PWC-Net Pyramid",
+                                                        fontSize = 10.5.sp,
+                                                        fontWeight = FontWeight.Bold,
+                                                        color = Color(0xFF2563EB),
+                                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                                    )
+                                                }
+                                            }
+                                            Text(
+                                                text = "Sub-pixel feature warping and correlation cost volume align hand-held frame shifts with sub-pixel precision.",
+                                                fontSize = 11.sp,
+                                                color = Color(0xFF6B7280)
+                                            )
+
+                                            Spacer(modifier = Modifier.height(4.dp))
+                                            HorizontalDivider(color = Color(0xFFF3F4F6), thickness = 1.dp)
+                                            Spacer(modifier = Modifier.height(4.dp))
+
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Text(
+                                                    text = "Bayer RAW & Attention Merging",
+                                                    fontSize = 13.sp,
+                                                    fontWeight = FontWeight.SemiBold,
+                                                    color = Color(0xFF1F2937)
+                                                )
+                                                Surface(
+                                                    shape = RoundedCornerShape(4.dp),
+                                                    color = Color(0xFFF0FDF4)
+                                                ) {
+                                                    Text(
+                                                        text = "4-Channel Bayer",
+                                                        fontSize = 10.5.sp,
+                                                        fontWeight = FontWeight.Bold,
+                                                        color = Color(0xFF16A34A),
+                                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                                    )
+                                                }
+                                            }
+                                            Text(
+                                                text = "Preserves pure sensor Bayer quads [R, G1, G2, B] with spatial softmax attention weighting across burst frames.",
+                                                fontSize = 11.sp,
+                                                color = Color(0xFF6B7280)
+                                            )
+
+                                            Spacer(modifier = Modifier.height(4.dp))
+                                            HorizontalDivider(color = Color(0xFFF3F4F6), thickness = 1.dp)
+                                            Spacer(modifier = Modifier.height(4.dp))
+
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Text(
+                                                    text = "Super-Resolution Decoder",
+                                                    fontSize = 13.sp,
+                                                    fontWeight = FontWeight.SemiBold,
+                                                    color = Color(0xFF1F2937)
+                                                )
+                                                Surface(
+                                                    shape = RoundedCornerShape(4.dp),
+                                                    color = Color(0xFFFAF5FF)
+                                                ) {
+                                                    Text(
+                                                        text = "4x Sub-Pixel",
+                                                        fontSize = 10.5.sp,
+                                                        fontWeight = FontWeight.Bold,
+                                                        color = Color(0xFF7C3AED),
+                                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                                    )
+                                                }
+                                            }
+                                            Text(
+                                                text = "Two-stage PixelShuffle expansion reconstructs high-resolution RGB image without blur or pixelation.",
+                                                fontSize = 11.sp,
+                                                color = Color(0xFF6B7280)
+                                            )
+                                        }
+                                    }
+                                }
+                            }
                             SettingsSubPage.VIDEO -> {
                                 item {
                                     SettingsSectionCard(title = "Video Quality & Recording") {

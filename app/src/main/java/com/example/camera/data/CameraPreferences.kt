@@ -42,7 +42,26 @@ class CameraPreferences(context: Context) {
         private const val KEY_VIDEO_HDR_MIDTONES = "pref_video_hdr_midtones"
         private const val KEY_VIDEO_HDR_SATURATION = "pref_video_hdr_saturation"
         private const val KEY_VIEWFINDER_RESOLUTION = "pref_viewfinder_resolution"
+        private const val KEY_REFOCUS_PHOTO_ENABLED = "pref_refocus_photo_enabled"
+        private const val KEY_AI_ZOOM_ENABLED = "pref_ai_zoom_enabled"
+        private const val KEY_AI_ZOOM_QUALITY = "pref_ai_zoom_quality"
     }
+
+    var isAiZoomEnabled: Boolean
+        get() = prefs.getBoolean(KEY_AI_ZOOM_ENABLED, false)
+        set(value) = prefs.edit().putBoolean(KEY_AI_ZOOM_ENABLED, value).apply()
+
+    var aiZoomQuality: com.example.camera.dbsr.AiZoomQuality
+        get() {
+            val name = prefs.getString(KEY_AI_ZOOM_QUALITY, com.example.camera.dbsr.AiZoomQuality.AUTO.name)
+                ?: com.example.camera.dbsr.AiZoomQuality.AUTO.name
+            return try { com.example.camera.dbsr.AiZoomQuality.valueOf(name) } catch (e: Exception) { com.example.camera.dbsr.AiZoomQuality.AUTO }
+        }
+        set(value) = prefs.edit().putString(KEY_AI_ZOOM_QUALITY, value.name).apply()
+
+    var isRefocusPhotoEnabled: Boolean
+        get() = prefs.getBoolean(KEY_REFOCUS_PHOTO_ENABLED, false)
+        set(value) = prefs.edit().putBoolean(KEY_REFOCUS_PHOTO_ENABLED, value).apply()
 
     var cameraMode: CameraMode
         get() {

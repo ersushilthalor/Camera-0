@@ -28,7 +28,13 @@ import coil.compose.AsyncImage
 import com.example.camera.model.CapturedMedia
 
 import androidx.compose.foundation.border
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.text.style.TextOverflow
+import com.example.camera.data.RefocusRepository
+import com.example.camera.data.db.RefocusPhotoEntity
 import com.example.camera.ui.components.FrostedGlassBox
 
 @Composable
@@ -39,6 +45,14 @@ fun MediaViewerDialog(
 ) {
     if (media == null) return
     val context = LocalContext.current
+    var refocusEntity by remember(media.uri) { mutableStateOf<RefocusPhotoEntity?>(null) }
+
+    LaunchedEffect(media.uri) {
+        if (!media.isVideo) {
+            val repo = RefocusRepository(context)
+            refocusEntity = repo.getRefocusPhoto(media.uri.toString())
+        }
+    }
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -50,7 +64,7 @@ fun MediaViewerDialog(
                 .background(Color.Black)
                 .testTag("media_viewer_dialog")
         ) {
-            // Media Preview or In-App Video Playback
+            // Media Preview, Interactive Refocus Viewer, or In-App Video Playback
             if (media.isVideo) {
                 val videoAspectRatio = remember(media.uri) {
                     try {
@@ -88,6 +102,11 @@ fun MediaViewerDialog(
                             .aspectRatio(videoAspectRatio, matchHeightConstraintsFirst = true)
                     )
                 }
+            } else if (refocusEntity != null) {
+                InteractiveRefocusViewer(
+                    refocusEntity = refocusEntity!!,
+                    modifier = Modifier.fillMaxSize()
+                )
             } else {
                 AsyncImage(
                     model = media.uri,
@@ -127,15 +146,28 @@ fun MediaViewerDialog(
                     baseAlpha = 0.70f,
                     modifier = Modifier.padding(horizontal = 8.dp)
                 ) {
-                    Text(
-                        text = media.displayName,
-                        color = Color.White,
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)
-                    )
+                    Row(
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        if (refocusEntity != null) {
+                            Text(
+                                text = "◎",
+                                color = Color(0xFFFFD54F),
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                        Text(
+                            text = if (refocusEntity != null) "Refocus · ${media.displayName}" else media.displayName,
+                            color = Color.White,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
                 }
 
                 IconButton(
