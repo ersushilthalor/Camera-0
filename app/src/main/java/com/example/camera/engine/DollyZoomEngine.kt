@@ -278,6 +278,26 @@ class DollyZoomEngine(
         )
     }
 
+    fun calibrateSubject() {
+        calibrate(
+            currentZoom = referenceZoom,
+            currentFace = null,
+            lensFocusDiopters = 2.0f,
+            sensorRect = null
+        )
+    }
+
+    fun lockSubjectAt(normX: Float, normY: Float) {
+        lockSubject(
+            normX = normX,
+            normY = normY,
+            currentZoom = referenceZoom,
+            faces = emptyArray(),
+            lensFocusDiopters = 2.0f,
+            sensorRect = null
+        )
+    }
+
     /**
      * Resets calibration to initial state.
      */

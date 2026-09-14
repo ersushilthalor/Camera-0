@@ -105,27 +105,30 @@ fun InteractiveRefocusViewer(
     LaunchedEffect(refocusEntity.bundleDir) {
         isLoading = true
         withContext(Dispatchers.IO) {
-            val near = decodeScaledBitmap(refocusEntity.nearPlanePath, 1440)
-            val mid = decodeScaledBitmap(refocusEntity.midPlanePath, 1440)
-            val far = decodeScaledBitmap(refocusEntity.farPlanePath, 1440)
-            val depth = refocusEngine.loadDepthMap(refocusEntity.depthMapPath)
+            try {
+                val near = decodeScaledBitmap(refocusEntity.nearPlanePath, 1440)
+                val mid = decodeScaledBitmap(refocusEntity.midPlanePath, 1440)
+                val far = decodeScaledBitmap(refocusEntity.farPlanePath, 1440)
+                val depth = refocusEngine.loadDepthMap(refocusEntity.depthMapPath)
 
-            withContext(Dispatchers.Main) {
-                nearBitmap = near
-                midBitmap = mid
-                farBitmap = far
-                depthMapData = depth
-                isLoading = false
+                withContext(Dispatchers.Main) {
+                    nearBitmap = near
+                    midBitmap = mid
+                    farBitmap = far
+                    depthMapData = depth
+                    isLoading = false
+                }
+            } catch (e: Throwable) {
+                withContext(Dispatchers.Main) {
+                    isLoading = false
+                }
             }
         }
     }
 
-    // Clean up Bitmaps on disposal
+    // Safely clear references on disposal without forcing canvas draw errors
     DisposableEffect(Unit) {
         onDispose {
-            nearBitmap?.recycle()
-            midBitmap?.recycle()
-            farBitmap?.recycle()
             nearBitmap = null
             midBitmap = null
             farBitmap = null

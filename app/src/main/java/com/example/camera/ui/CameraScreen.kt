@@ -122,8 +122,6 @@ fun CameraScreen(
     val isPortraitSettingsOpen by viewModel.isPortraitSettingsOpen.collectAsStateWithLifecycle()
     val saveSelfieAsPreviewed by viewModel.saveSelfieAsPreviewed.collectAsStateWithLifecycle()
     val photoMegapixelMode by viewModel.photoMegapixelMode.collectAsStateWithLifecycle()
-    val superResBackend by viewModel.superResBackend.collectAsStateWithLifecycle()
-    val superResMemoryLimit by viewModel.superResMemoryLimit.collectAsStateWithLifecycle()
     val superResProgress by viewModel.superResProgress.collectAsStateWithLifecycle()
     val isRefocusPhotoEnabled by viewModel.isRefocusPhotoEnabled.collectAsStateWithLifecycle()
     val isVideoSettingsPanelOpen by viewModel.isVideoSettingsPanelOpen.collectAsStateWithLifecycle()
@@ -191,8 +189,6 @@ fun CameraScreen(
     val thermalProtection by viewModel.thermalProtection.collectAsStateWithLifecycle()
     val isAutoHdrEnabled by viewModel.isAutoHdrEnabled.collectAsStateWithLifecycle()
     val isAiAutoFramingEnabled by viewModel.isAiAutoFramingEnabled.collectAsStateWithLifecycle()
-    val isAiZoomEnabled by viewModel.isAiZoomEnabled.collectAsStateWithLifecycle()
-    val aiZoomQuality by viewModel.aiZoomQuality.collectAsStateWithLifecycle()
     val isAiZoomProcessing by viewModel.isAiZoomProcessing.collectAsStateWithLifecycle()
     val aiZoomProgress by viewModel.aiZoomProgress.collectAsStateWithLifecycle()
 
@@ -241,7 +237,7 @@ fun CameraScreen(
     ) {
         // 1. Viewfinder layer preserving exact aspect ratio without distortion
         Viewfinder(
-            aspectRatio = previewAspectRatio,
+            aspectRatio = previewAspectRatio.ratio,
             gridType = gridType,
             focusRingPoint = focusRingPoint,
             isAeLocked = isAeLocked,
@@ -680,11 +676,7 @@ fun CameraScreen(
             selectedPhotoResolution = selectedPhotoResolution,
             selectedVideoResolution = selectedVideoResolution,
             photoMegapixelMode = photoMegapixelMode,
-            superResBackend = superResBackend,
-            superResMemoryLimit = superResMemoryLimit,
             isRefocusPhotoEnabled = isRefocusPhotoEnabled,
-            isAiZoomEnabled = isAiZoomEnabled,
-            aiZoomQuality = aiZoomQuality,
             videoFps = videoFps,
             videoBitrate = videoBitrate,
             isVideoStabilizationEnabled = isVideoStabilizationEnabled,
@@ -757,11 +749,7 @@ fun CameraScreen(
             onForceDeepScan = { viewModel.forceDeepScanLenses() },
             onPhotoResolutionSelected = { viewModel.selectPhotoResolution(it) },
             onPhotoMegapixelModeSelected = { viewModel.setPhotoMegapixelMode(it) },
-            onSuperResBackendSelected = { viewModel.setSuperResBackend(it) },
-            onSuperResMemoryLimitSelected = { viewModel.setSuperResMemoryLimit(it) },
             onRefocusPhotoToggle = { viewModel.setRefocusPhotoEnabled(it) },
-            onAiZoomToggle = { viewModel.setAiZoomEnabled(it) },
-            onAiZoomQualitySelect = { viewModel.setAiZoomQuality(it) },
             onVideoResolutionSelected = { viewModel.selectVideoResolution(it) },
             onViewfinderResolutionSelected = { viewModel.setViewfinderResolution(it) },
             onVideoFpsSelected = { viewModel.setVideoFps(it) },

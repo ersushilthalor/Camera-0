@@ -43,21 +43,7 @@ class CameraPreferences(context: Context) {
         private const val KEY_VIDEO_HDR_SATURATION = "pref_video_hdr_saturation"
         private const val KEY_VIEWFINDER_RESOLUTION = "pref_viewfinder_resolution"
         private const val KEY_REFOCUS_PHOTO_ENABLED = "pref_refocus_photo_enabled"
-        private const val KEY_AI_ZOOM_ENABLED = "pref_ai_zoom_enabled"
-        private const val KEY_AI_ZOOM_QUALITY = "pref_ai_zoom_quality"
     }
-
-    var isAiZoomEnabled: Boolean
-        get() = prefs.getBoolean(KEY_AI_ZOOM_ENABLED, false)
-        set(value) = prefs.edit().putBoolean(KEY_AI_ZOOM_ENABLED, value).apply()
-
-    var aiZoomQuality: com.example.camera.dbsr.AiZoomQuality
-        get() {
-            val name = prefs.getString(KEY_AI_ZOOM_QUALITY, com.example.camera.dbsr.AiZoomQuality.AUTO.name)
-                ?: com.example.camera.dbsr.AiZoomQuality.AUTO.name
-            return try { com.example.camera.dbsr.AiZoomQuality.valueOf(name) } catch (e: Exception) { com.example.camera.dbsr.AiZoomQuality.AUTO }
-        }
-        set(value) = prefs.edit().putString(KEY_AI_ZOOM_QUALITY, value.name).apply()
 
     var isRefocusPhotoEnabled: Boolean
         get() = prefs.getBoolean(KEY_REFOCUS_PHOTO_ENABLED, false)
@@ -215,24 +201,6 @@ class CameraPreferences(context: Context) {
             return try { com.example.camera.model.PhotoMegapixelMode.valueOf(name) } catch (e: Exception) { com.example.camera.model.PhotoMegapixelMode.M12 }
         }
         set(value) = prefs.edit().putString("pref_photo_mp_mode", value.name).apply()
-
-    // AI Super Resolution Backend (Auto / CPU / GPU)
-    var superResBackend: com.example.camera.model.SuperResBackend
-        get() {
-            val name = prefs.getString("pref_super_res_backend", com.example.camera.model.SuperResBackend.AUTO.name)
-                ?: com.example.camera.model.SuperResBackend.AUTO.name
-            return try { com.example.camera.model.SuperResBackend.valueOf(name) } catch (e: Exception) { com.example.camera.model.SuperResBackend.AUTO }
-        }
-        set(value) = prefs.edit().putString("pref_super_res_backend", value.name).apply()
-
-    // AI Super Resolution Memory Limit (Auto / 512MB / 1GB / 2GB / 3GB / 4GB)
-    var superResMemoryLimit: com.example.camera.model.SuperResMemoryLimit
-        get() {
-            val name = prefs.getString("pref_super_res_memory_limit", com.example.camera.model.SuperResMemoryLimit.AUTO.name)
-                ?: com.example.camera.model.SuperResMemoryLimit.AUTO.name
-            return try { com.example.camera.model.SuperResMemoryLimit.valueOf(name) } catch (e: Exception) { com.example.camera.model.SuperResMemoryLimit.AUTO }
-        }
-        set(value) = prefs.edit().putString("pref_super_res_memory_limit", value.name).apply()
 
     // Cinema Mode Preferences - Full Persistence across sessions
     var cinemaFps: Int

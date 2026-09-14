@@ -151,54 +151,17 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     private val _isCinemaSettingsOpen = MutableStateFlow(false)
     val isCinemaSettingsOpen: StateFlow<Boolean> = _isCinemaSettingsOpen.asStateFlow()
 
-    // Photo Megapixel Mode (12M vs 24M vs 50M vs 100M vs 200M)
+    // Photo Megapixel Mode (12M Standard vs 50M Ultra Multi-Frame Computational Photography)
     private val _photoMegapixelMode = MutableStateFlow(preferences.photoMegapixelMode)
     val photoMegapixelMode: StateFlow<PhotoMegapixelMode> = _photoMegapixelMode.asStateFlow()
 
-    // Super Resolution Backend (Auto / CPU / GPU)
-    private val _superResBackend = MutableStateFlow(preferences.superResBackend)
-    val superResBackend: StateFlow<SuperResBackend> = _superResBackend.asStateFlow()
-
-    // Super Resolution Memory Limit (Auto / 512MB / 1GB / 2GB / 3GB / 4GB)
-    private val _superResMemoryLimit = MutableStateFlow(preferences.superResMemoryLimit)
-    val superResMemoryLimit: StateFlow<SuperResMemoryLimit> = _superResMemoryLimit.asStateFlow()
-
     val superResProgress: StateFlow<Pair<Float, String>?> = engine.superResProgress
+    val isAiZoomProcessing: StateFlow<Boolean> = engine.isAiZoomProcessing
+    val aiZoomProgress: StateFlow<Float> = engine.aiZoomProgress
 
     // Refocus Photo Mode
     private val _isRefocusPhotoEnabled = MutableStateFlow(preferences.isRefocusPhotoEnabled)
     val isRefocusPhotoEnabled: StateFlow<Boolean> = _isRefocusPhotoEnabled.asStateFlow()
-
-    // AI Zoom (Deep Burst Super-Resolution)
-    private val _isAiZoomEnabled = MutableStateFlow(preferences.isAiZoomEnabled)
-    val isAiZoomEnabled: StateFlow<Boolean> = _isAiZoomEnabled.asStateFlow()
-
-    private val _aiZoomQuality = MutableStateFlow(preferences.aiZoomQuality)
-    val aiZoomQuality: StateFlow<com.example.camera.dbsr.AiZoomQuality> = _aiZoomQuality.asStateFlow()
-
-    val isAiZoomProcessing: StateFlow<Boolean> = engine.isAiZoomProcessing
-    val aiZoomProgress: StateFlow<Float> = engine.aiZoomProgress
-
-    fun setAiZoomEnabled(enabled: Boolean) {
-        _isAiZoomEnabled.value = enabled
-        preferences.isAiZoomEnabled = enabled
-        engine.isAiZoomEnabled = enabled
-        if (enabled) {
-            viewModelScope.launch(Dispatchers.Default) {
-                engine.dbsrEngine.preload()
-            }
-            showToast("AI Zoom (DBSR): ON")
-        } else {
-            showToast("AI Zoom (DBSR): OFF")
-        }
-    }
-
-    fun setAiZoomQuality(quality: com.example.camera.dbsr.AiZoomQuality) {
-        _aiZoomQuality.value = quality
-        preferences.aiZoomQuality = quality
-        engine.aiZoomQuality = quality
-        showToast("AI Zoom Quality: ${quality.label}")
-    }
 
     fun setRefocusPhotoEnabled(enabled: Boolean) {
         _isRefocusPhotoEnabled.value = enabled
@@ -215,39 +178,16 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         _photoMegapixelMode.value = mode
         preferences.photoMegapixelMode = mode
         engine.photoMegapixelMode = mode
-        if (mode.isSuperRes) {
-            showToast("${mode.label} AI Super Resolution")
+        if (mode.is50M) {
+            showToast("50MP Computational Mode (4-Frame Fusion)")
         } else {
             showToast("12M Standard Mode")
         }
     }
 
     fun togglePhotoMegapixelMode() {
-        val modes = PhotoMegapixelMode.entries
-        val currentIndex = modes.indexOf(_photoMegapixelMode.value)
-        val next = modes[(currentIndex + 1) % modes.size]
-        _photoMegapixelMode.value = next
-        preferences.photoMegapixelMode = next
-        engine.photoMegapixelMode = next
-        if (next.isSuperRes) {
-            showToast("${next.label} AI Super Resolution")
-        } else {
-            showToast("12M Standard Mode")
-        }
-    }
-
-    fun setSuperResBackend(backend: SuperResBackend) {
-        _superResBackend.value = backend
-        preferences.superResBackend = backend
-        engine.superResBackend = backend
-        showToast("AI SR Backend: ${backend.label}")
-    }
-
-    fun setSuperResMemoryLimit(limit: SuperResMemoryLimit) {
-        _superResMemoryLimit.value = limit
-        preferences.superResMemoryLimit = limit
-        engine.superResMemoryLimit = limit
-        showToast("AI SR Memory Limit: ${limit.label}")
+        val next = if (_photoMegapixelMode.value.is50M) PhotoMegapixelMode.M12 else PhotoMegapixelMode.M50
+        setPhotoMegapixelMode(next)
     }
 
     // More Modes Drawer visibility
@@ -311,9 +251,14 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
 
     fun safeInitializeCamera(onResult: (success: Boolean, errorMessage: String?) -> Unit = { _, _ -> }) {
         viewModelScope.launch(Dispatchers.Default) {
-            engine.safeInitializeCamera { success, error ->
-                viewModelScope.launch(Dispatchers.Main) {
-                    onResult(success, error)
+            try {
+                engine.safeInitializeCamera()
+                withContext(Dispatchers.Main) {
+                    onResult(engine.isCameraInitialized.value, engine.cameraInitError.value)
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    onResult(false, e.message)
                 }
             }
         }
@@ -367,7 +312,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         engine.flashMode = preferences.flashMode
         engine.isRawCaptureEnabled = preferences.isRawEnabled
         engine.isVideoStabilizationEnabled = preferences.isVideoStabilizationEnabled
-        engine.videoBitrateOption = preferences.videoBitrate
+        engine.videoBitrateOption = preferences.videoBitrate.title
         engine.videoFps = preferences.videoFps
         engine.colorProfile = preferences.colorProfile
         engine.isAudioEnabled = preferences.isAudioEnabled
@@ -376,16 +321,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         engine.saveSelfieAsPreviewed = preferences.saveSelfieAsPreviewed
         engine.viewfinderResolution = preferences.viewfinderResolution
         engine.photoMegapixelMode = preferences.photoMegapixelMode
-        engine.superResBackend = preferences.superResBackend
-        engine.superResMemoryLimit = preferences.superResMemoryLimit
         engine.isRefocusPhotoEnabled = preferences.isRefocusPhotoEnabled
-        engine.isAiZoomEnabled = preferences.isAiZoomEnabled
-        engine.aiZoomQuality = preferences.aiZoomQuality
-        if (preferences.isAiZoomEnabled) {
-            viewModelScope.launch(Dispatchers.Default) {
-                engine.dbsrEngine.preload()
-            }
-        }
         // Video HDR system removed: permanently OFF
         engine.setVideoHdrMode(VideoHdrMode.OFF)
         engine.setMode(preferences.cameraMode)
@@ -468,42 +404,42 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
 
     fun setVideoHdrManualIntensity(intensity: Int) {
         preferences.videoHdrManualIntensity = intensity
-        engine.setVideoHdrManualIntensity(intensity)
+        engine.setVideoHdrManualIntensity(intensity.toFloat())
     }
 
     fun setVideoHdrManualShadows(value: Int) {
         preferences.videoHdrManualShadows = value
-        engine.setVideoHdrManualShadows(value)
+        engine.setVideoHdrManualShadows(value.toFloat())
     }
 
     fun setVideoHdrManualHighlights(value: Int) {
         preferences.videoHdrManualHighlights = value
-        engine.setVideoHdrManualHighlights(value)
+        engine.setVideoHdrManualHighlights(value.toFloat())
     }
 
     fun setVideoHdrManualContrast(value: Int) {
         preferences.videoHdrManualContrast = value
-        engine.setVideoHdrManualContrast(value)
+        engine.setVideoHdrManualContrast(value.toFloat())
     }
 
     fun setVideoHdrManualExposure(value: Int) {
         preferences.videoHdrManualExposure = value
-        engine.setVideoHdrManualExposure(value)
+        engine.setVideoHdrManualExposure(value.toFloat())
     }
 
     fun setVideoHdrManualBlackLevel(value: Int) {
         preferences.videoHdrManualBlackLevel = value
-        engine.setVideoHdrManualBlackLevel(value)
+        engine.setVideoHdrManualBlackLevel(value.toFloat())
     }
 
     fun setVideoHdrManualMidtones(value: Int) {
         preferences.videoHdrManualMidtones = value
-        engine.setVideoHdrManualMidtones(value)
+        engine.setVideoHdrManualMidtones(value.toFloat())
     }
 
     fun setVideoHdrManualSaturation(value: Int) {
         preferences.videoHdrManualSaturation = value
-        engine.setVideoHdrManualSaturation(value)
+        engine.setVideoHdrManualSaturation(value.toFloat())
     }
 
     fun setVideoHdrPanelOpen(isOpen: Boolean) {
@@ -522,10 +458,10 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         // Apply true 9:16 aspect ratio for Video and Cinema modes before session reconfiguration
         if (mode == CameraMode.VIDEO || mode == CameraMode.CINEMA || mode == CameraMode.DOLLY_ZOOM) {
             _selectedAspectRatio.value = CameraAspectRatio.RATIO_9_16
-            engine.setPreviewAspectRatio(16f / 9f)
+            engine.setPreviewAspectRatio(CameraAspectRatio.RATIO_9_16)
         } else if (mode == CameraMode.PHOTO || mode == CameraMode.PORTRAIT || mode == CameraMode.NIGHT || mode == CameraMode.MORE) {
             _selectedAspectRatio.value = CameraAspectRatio.RATIO_4_3
-            engine.setPreviewAspectRatio(4f / 3f)
+            engine.setPreviewAspectRatio(CameraAspectRatio.RATIO_4_3)
         }
 
         if (mode == CameraMode.AI_SUBJECT_TRACKING) {
@@ -558,7 +494,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun forceDeepScanLenses() {
-        val count = engine.detectHardwareLenses(forceDeepScan = true)
+        val count = engine.forceDeepScanLenses()
         showToast("Deep scan found $count hardware & aux lenses")
     }
 
@@ -682,13 +618,13 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
 
     fun setManualIso(iso: Int?) {
         _manualIso.value = iso
-        engine.manualIso = iso
+        engine.manualIso = iso ?: 0
         engine.updatePreviewSettings()
     }
 
     fun setManualShutterSpeedNs(ns: Long?) {
         _manualShutterSpeedNs.value = ns
-        engine.manualExposureTimeNs = ns
+        engine.manualExposureTimeNs = ns ?: 0L
         engine.updatePreviewSettings()
     }
 
@@ -716,15 +652,13 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
 
     fun toggleAeLock() {
         val next = !engine.isAeLockedFlow.value
-        engine.isAeLocked = next
-        engine.updatePreviewSettings()
+        engine.setAeLock(next)
         showToast(if (next) "Exposure Locked" else "Exposure Unlocked")
     }
 
     fun toggleAfLock() {
         val next = !engine.isAfLockedFlow.value
-        engine.isAfLocked = next
-        engine.updatePreviewSettings()
+        engine.setAfLock(next)
         showToast(if (next) "Focus Locked" else "Focus Unlocked")
     }
 
@@ -750,7 +684,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     fun setVideoBitrate(bitrate: VideoBitrateOption) {
         _videoBitrateOption.value = bitrate
         preferences.videoBitrate = bitrate
-        engine.videoBitrateOption = bitrate
+        engine.videoBitrateOption = bitrate.title
         showToast("Bitrate: ${bitrate.title}")
     }
 

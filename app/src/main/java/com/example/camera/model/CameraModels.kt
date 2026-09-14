@@ -175,7 +175,9 @@ enum class CameraAspectRatio(
     RATIO_16_9("16:9", 16f / 9f, true),
     RATIO_4_3("4:3", 4f / 3f, false),
     RATIO_1_1("1:1", 1f, false),
-    RATIO_FULL("FULL", 0f, true)
+    RATIO_FULL("FULL", 0f, true);
+
+    val ratio: Float get() = ratioValue
 }
 
 enum class WhiteBalanceMode(val title: String, val camera2Mode: Int, val shortLabel: String = title) {
@@ -320,12 +322,12 @@ data class CameraResolution(
 
 data class LensInfo(
     val id: String = java.util.UUID.randomUUID().toString(),
-    val cameraId: String,
-    val facing: Int, // CameraCharacteristics.LENS_FACING_BACK, etc.
-    val lensType: LensType,
-    val displayName: String,
-    val focalLengthMm: Float,
-    val maxAperture: Float,
+    val cameraId: String = id,
+    val facing: Int = 0, // CameraCharacteristics.LENS_FACING_BACK, etc.
+    val lensType: LensType = if (facing == 1) LensType.FRONT else LensType.WIDE,
+    val displayName: String = "Camera $id",
+    val focalLengthMm: Float = 4.0f,
+    val maxAperture: Float = 1.8f,
     val isPhysical: Boolean = false,
     val isHiddenAux: Boolean = false,
     val isZoomPreset: Boolean = false,
@@ -333,7 +335,13 @@ data class LensInfo(
     val physicalCameraId: String? = null,
     val fovDegrees: Float = 0f,
     val equivalent35mmFocalMm: Float = 0f,
-    val idTypeDescription: String = "Logical"
+    val idTypeDescription: String = "Logical",
+    val hasOpticalStabilization: Boolean = false,
+    val label: String = displayName,
+    val aperture: Float = maxAperture,
+    val isUltraWide: Boolean = (lensType == LensType.ULTRAWIDE),
+    val isTelephoto: Boolean = (lensType == LensType.TELEPHOTO || lensType == LensType.TELEPHOTO_3X),
+    val zoomFactor: Float = baseZoomRatio
 )
 
 enum class LensType(val shortLabel: String, val fullLabel: String) {
@@ -367,7 +375,11 @@ data class HardwareCapabilities(
     val supportedFpsRanges: List<Int> = listOf(30, 60),
     val supportsTonemapCurve: Boolean = false,
     val minZoom: Float = 1.0f,
-    val maxZoom: Float = 8f
+    val maxZoom: Float = 8f,
+    val isoRange: android.util.Range<Int> = android.util.Range(minIso, maxIso),
+    val shutterSpeedRangeNs: android.util.Range<Long> = android.util.Range(minExposureTimeNs, maxExposureTimeNs),
+    val exposureCompensationRange: android.util.Range<Int> = android.util.Range(minExposureCompensation, maxExposureCompensation),
+    val maxZoomRatio: Float = maxZoom
 )
 
 data class StorageStats(
@@ -375,15 +387,20 @@ data class StorageStats(
     val totalBytes: Long = 0L,
     val freeGb: Float = 0f,
     val estimatedPhotos: Int = 0,
-    val estimatedVideoMinutes: Int = 0
+    val estimatedVideoMinutes: Int = 0,
+    val availableSpaceGb: Float = freeGb,
+    val totalSpaceGb: Float = 0f,
+    val estimatedPhotosRemaining: Int = estimatedPhotos,
+    val estimatedVideoMinutesRemaining: Int = estimatedVideoMinutes
 )
 
 data class CapturedMedia(
     val uri: android.net.Uri,
     val isVideo: Boolean,
-    val timestamp: Long,
-    val displayName: String,
-    val isFrontCamera: Boolean = false
+    val timestamp: Long = System.currentTimeMillis(),
+    val displayName: String = "IMG_${System.currentTimeMillis()}",
+    val isFrontCamera: Boolean = false,
+    val durationSeconds: Int = 0
 )
 
 enum class DollyDirection(val label: String) {

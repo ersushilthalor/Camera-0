@@ -46,10 +46,6 @@
             android:exported="false"
             android:screenOrientation="portrait"
             android:theme="@style/Theme.MyApplication" />
-        <service
-            android:name=".camera.superres.SuperResForegroundService"
-            android:exported="false"
-            android:foregroundServiceType="dataSync" />
     </application>
 
 </manifest>

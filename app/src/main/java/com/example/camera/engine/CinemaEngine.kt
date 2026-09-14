@@ -14,6 +14,9 @@ import android.os.Build
 import android.util.Log
 import android.util.Range
 import com.example.camera.model.*
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlin.math.ln
 import kotlin.math.log10
 import kotlin.math.pow
@@ -44,16 +47,25 @@ class CinemaEngine(private val context: Context) {
         private const val CURVE_POINTS = 64
     }
 
-    var config: CinemaConfig = CinemaConfig()
+    private val _cinemaConfig = MutableStateFlow(CinemaConfig())
+    val cinemaConfig: StateFlow<CinemaConfig> = _cinemaConfig.asStateFlow()
+
+    var config: CinemaConfig
+        get() = _cinemaConfig.value
         set(value) {
-            field = value
-            _capabilities = _capabilities.copy(
+            _cinemaConfig.value = value
+            _cinemaCapabilities.value = _cinemaCapabilities.value.copy(
                 isHardwareLogSupported = supportsContrastCurve
             )
         }
 
-    private var _capabilities = CinemaHardwareCapabilities()
-    val capabilities: CinemaHardwareCapabilities get() = _capabilities
+    fun updateConfig(newConfig: CinemaConfig) {
+        config = newConfig
+    }
+
+    private val _cinemaCapabilities = MutableStateFlow(CinemaHardwareCapabilities())
+    val cinemaCapabilities: StateFlow<CinemaHardwareCapabilities> = _cinemaCapabilities.asStateFlow()
+    val capabilities: CinemaHardwareCapabilities get() = _cinemaCapabilities.value
 
     private var supportsContrastCurve: Boolean = false
     private var supportsGammaValue: Boolean = false
@@ -139,7 +151,7 @@ class CinemaEngine(private val context: Context) {
         if (fpsRanges.any { it.upper >= 60 }) supportedFps.add(60)
         if (supportedFps.isEmpty()) supportedFps.addAll(listOf(24, 30))
 
-        _capabilities = CinemaHardwareCapabilities(
+        _cinemaCapabilities.value = CinemaHardwareCapabilities(
             supportsContrastCurve = supportsContrastCurve,
             supports10BitRecording = supports10Bit,
             supportsHevc10Bit = hevc10BitSupported,
