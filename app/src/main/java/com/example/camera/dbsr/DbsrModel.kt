@@ -94,6 +94,13 @@ class DbsrModel(private val weights: Map<String, ConvWeights>) {
         private var cachedInstance: DbsrModel? = null
 
         /**
+         * Asynchronously preloads and warms the DBSR model weights into memory.
+         */
+        suspend fun preload(context: Context) {
+            getInstance(context)
+        }
+
+        /**
          * Loads and caches the DBSR model weights once into memory.
          */
         suspend fun getInstance(context: Context): DbsrModel = withContext(Dispatchers.IO) {
@@ -256,17 +263,24 @@ class DbsrModel(private val weights: Map<String, ConvWeights>) {
         val h = reference.h
         val w = reference.w
         val flow = FlowField(h, w)
+        val hw = h * w
+        val rData = reference.data
+        val sData = source.data
+        val numC = min(4, reference.c)
 
         // Downsample factor 2 for pyramid level 1
         val h2 = max(1, h / 2)
         val w2 = max(1, w / 2)
-        val searchR = if (quality == AiZoomQuality.HIGH) 3 else 2
+        val searchR = if (quality == AiZoomQuality.HIGH) 2 else 1
 
         // Fast block-matching optical flow pyramid matching PWC-Net's cost volume
         for (y in 0 until h2) {
             val origY = y * 2
+            val rRowOffset = origY * w
+
             for (x in 0 until w2) {
                 val origX = x * 2
+                val rIdx = rRowOffset + origX
 
                 var bestCost = Float.MAX_VALUE
                 var bestDx = 0f
@@ -275,17 +289,18 @@ class DbsrModel(private val weights: Map<String, ConvWeights>) {
                 for (dy in -searchR..searchR) {
                     val sy = origY + dy
                     if (sy < 0 || sy >= h) continue
+                    val sRowOffset = sy * w
 
                     for (dx in -searchR..searchR) {
                         val sx = origX + dx
                         if (sx < 0 || sx >= w) continue
+                        val sIdx = sRowOffset + sx
 
-                        // Multi-channel L1 difference (cost volume)
+                        // Fast multi-channel L1 difference (cost volume)
                         var cost = 0f
-                        for (c in 0 until min(4, reference.c)) {
-                            val rVal = reference.get(c, origY, origX)
-                            val sVal = source.get(c, sy, sx)
-                            cost += kotlin.math.abs(rVal - sVal)
+                        for (c in 0 until numC) {
+                            val cOffset = c * hw
+                            cost += kotlin.math.abs(rData[cOffset + rIdx] - sData[cOffset + sIdx])
                         }
 
                         // Motion prior (prefer smaller subpixel shifts)
@@ -320,39 +335,45 @@ class DbsrModel(private val weights: Map<String, ConvWeights>) {
     }
 
     /**
-     * 2. RAW 4-Channel Feature Encoder.
+     * 2. RAW 4-Channel Feature Encoder with buffer reuse.
      */
     fun encodeRawFrame(input: Tensor, C: Int = 32): Tensor {
         val h = input.h
         val w = input.w
-        var feat = Tensor(C, h, w)
+        val feat = Tensor(C, h, w)
 
         val convFirst = weights["encoder.conv_first"]
         if (convFirst != null) {
             conv2d(input, feat, convFirst, relu = true)
         } else {
-            // Identity fallback mapping
-            for (y in 0 until h) {
-                for (x in 0 until w) {
-                    for (c in 0 until C) {
-                        feat.set(c, y, x, input.get(c % input.c, y, x))
-                    }
-                }
+            // Fast identity fallback mapping
+            val hw = h * w
+            val inData = input.data
+            val featData = feat.data
+            for (c in 0 until C) {
+                val inOffset = (c % input.c) * hw
+                val outOffset = c * hw
+                System.arraycopy(inData, inOffset, featData, outOffset, hw)
             }
         }
 
-        // 3 Residual Blocks
+        // 3 Residual Blocks reusing a single pair of scratch tensors to eliminate memory allocations
+        val tmp = Tensor(C, h, w)
+        val res = Tensor(C, h, w)
+        val fData = feat.data
+        val rData = res.data
+        val totalFloats = fData.size
+
         for (i in 0 until 3) {
             val conv1 = weights["encoder.res_$i.conv1"]
             val conv2 = weights["encoder.res_$i.conv2"]
             if (conv1 != null && conv2 != null) {
-                val tmp = Tensor(C, h, w)
                 conv2d(feat, tmp, conv1, relu = true)
-                val res = Tensor(C, h, w)
                 conv2d(tmp, res, conv2, relu = false)
-                // Residual connection: feat + res
-                for (idx in feat.data.indices) {
-                    feat.data[idx] = max(0f, feat.data[idx] + res.data[idx] * 0.2f)
+                // Residual connection: feat + 0.2 * res
+                for (idx in 0 until totalFloats) {
+                    val v = fData[idx] + rData[idx] * 0.2f
+                    fData[idx] = if (v > 0f) v else 0f
                 }
             }
         }
@@ -367,10 +388,15 @@ class DbsrModel(private val weights: Map<String, ConvWeights>) {
         val c = feat.c
         val h = feat.h
         val w = feat.w
+        val hw = h * w
+        val featData = feat.data
         val warped = Tensor(c, h, w)
+        val warpedData = warped.data
 
         for (y in 0 until h) {
+            val yOffset = y * w
             for (x in 0 until w) {
+                val outIdx = yOffset + x
                 val srcX = x + flow.getU(y, x)
                 val srcY = y + flow.getV(y, x)
 
@@ -387,14 +413,17 @@ class DbsrModel(private val weights: Map<String, ConvWeights>) {
                 val clampedX0 = max(0, min(w - 1, x0))
                 val clampedY0 = max(0, min(h - 1, y0))
 
-                for (ch in 0 until c) {
-                    val p00 = feat.get(ch, clampedY0, clampedX0)
-                    val p10 = feat.get(ch, clampedY0, x1)
-                    val p01 = feat.get(ch, y1, clampedX0)
-                    val p11 = feat.get(ch, y1, x1)
+                val row0 = clampedY0 * w
+                val row1 = y1 * w
 
-                    val valInterp = (p00 * wx0 + p10 * wx1) * wy0 + (p01 * wx0 + p11 * wx1) * wy1
-                    warped.set(ch, y, x, valInterp)
+                for (ch in 0 until c) {
+                    val cOffset = ch * hw
+                    val p00 = featData[cOffset + row0 + clampedX0]
+                    val p10 = featData[cOffset + row0 + x1]
+                    val p01 = featData[cOffset + row1 + clampedX0]
+                    val p11 = featData[cOffset + row1 + x1]
+
+                    warpedData[cOffset + outIdx] = (p00 * wx0 + p10 * wx1) * wy0 + (p01 * wx0 + p11 * wx1) * wy1
                 }
             }
         }
@@ -409,30 +438,31 @@ class DbsrModel(private val weights: Map<String, ConvWeights>) {
         val C = baseFeature.c
         val h = baseFeature.h
         val w = baseFeature.w
+        val hw = h * w
         val merged = Tensor(C, h, w)
+        val baseData = baseFeature.data
 
         // Compute attention maps for each frame
-        val attnWeights = Array(numFrames) { FloatArray(h * w) }
+        val attnWeights = Array(numFrames) { FloatArray(hw) }
 
         for (i in 0 until numFrames) {
-            val feat = warpedFeatures[i]
+            val featData = warpedFeatures[i].data
             val wArr = attnWeights[i]
 
-            for (y in 0 until h) {
-                for (x in 0 until w) {
-                    var diff = 0f
-                    for (ch in 0 until C) {
-                        val d = feat.get(ch, y, x) - baseFeature.get(ch, y, x)
-                        diff += d * d
-                    }
-                    // Spatial correlation score
-                    wArr[y * w + x] = -diff / (C * 0.05f)
+            for (idx in 0 until hw) {
+                var diff = 0f
+                for (ch in 0 until C) {
+                    val cOffset = ch * hw
+                    val d = featData[cOffset + idx] - baseData[cOffset + idx]
+                    diff += d * d
                 }
+                // Spatial correlation score
+                wArr[idx] = -diff / (C * 0.05f)
             }
         }
 
         // Spatial Softmax across burst frames
-        for (idx in 0 until (h * w)) {
+        for (idx in 0 until hw) {
             var maxVal = Float.NEGATIVE_INFINITY
             for (i in 0 until numFrames) {
                 if (attnWeights[i][idx] > maxVal) maxVal = attnWeights[i][idx]
@@ -451,16 +481,15 @@ class DbsrModel(private val weights: Map<String, ConvWeights>) {
             }
         }
 
-        // Weighted summation
+        // Weighted summation across burst frames with contiguous array access
+        val mergedData = merged.data
         for (i in 0 until numFrames) {
-            val feat = warpedFeatures[i]
+            val featData = warpedFeatures[i].data
             val wArr = attnWeights[i]
-            for (y in 0 until h) {
-                for (x in 0 until w) {
-                    val weight = wArr[y * w + x]
-                    for (ch in 0 until C) {
-                        merged.add(ch, y, x, feat.get(ch, y, x) * weight)
-                    }
+            for (ch in 0 until C) {
+                val cOffset = ch * hw
+                for (idx in 0 until hw) {
+                    mergedData[cOffset + idx] += featData[cOffset + idx] * wArr[idx]
                 }
             }
         }
@@ -476,18 +505,23 @@ class DbsrModel(private val weights: Map<String, ConvWeights>) {
         val inH = mergedFeature.h
         val inW = mergedFeature.w
 
-        var feat = mergedFeature
-        // 3 Decoder Residual Blocks
+        val feat = mergedFeature
+        // 3 Decoder Residual Blocks with reused scratch tensors
+        val tmp = Tensor(C, inH, inW)
+        val res = Tensor(C, inH, inW)
+        val fData = feat.data
+        val rData = res.data
+        val totalFloats = fData.size
+
         for (i in 0 until 3) {
             val conv1 = weights["decoder.res_$i.conv1"]
             val conv2 = weights["decoder.res_$i.conv2"]
             if (conv1 != null && conv2 != null) {
-                val tmp = Tensor(C, inH, inW)
                 conv2d(feat, tmp, conv1, relu = true)
-                val res = Tensor(C, inH, inW)
                 conv2d(tmp, res, conv2, relu = false)
-                for (idx in feat.data.indices) {
-                    feat.data[idx] = max(0f, feat.data[idx] + res.data[idx] * 0.2f)
+                for (idx in 0 until totalFloats) {
+                    val v = fData[idx] + rData[idx] * 0.2f
+                    fData[idx] = if (v > 0f) v else 0f
                 }
             }
         }
@@ -530,6 +564,10 @@ class DbsrModel(private val weights: Map<String, ConvWeights>) {
         // Create baseline bilinear RGB upscaled image from base RAW frame for residual add
         val outBitmap = Bitmap.createBitmap(outW, outH, Bitmap.Config.ARGB_8888)
         val pixels = IntArray(outW * outH)
+        val resData = rgbResidual.data
+        val resHW = outH * outW
+        val baseData = baseRaw.data
+        val baseHW = inH * inW
 
         for (y in 0 until outH) {
             val srcY = (y.toFloat() / outH) * (inH - 1)
@@ -537,35 +575,41 @@ class DbsrModel(private val weights: Map<String, ConvWeights>) {
             val y1 = min(inH - 1, y0 + 1)
             val wy = srcY - y0
 
+            val y0Offset = y0 * inW
+            val y1Offset = y1 * inW
+            val outRowOffset = y * outW
+
             for (x in 0 until outW) {
                 val srcX = (x.toFloat() / outW) * (inW - 1)
                 val x0 = srcX.toInt()
                 val x1 = min(inW - 1, x0 + 1)
                 val wx = srcX - x0
 
-                // Base RAW R, G (average of G1, G2), B
-                fun sampleRaw(ch: Int): Float {
-                    val p00 = baseRaw.get(ch, y0, x0)
-                    val p10 = baseRaw.get(ch, y0, x1)
-                    val p01 = baseRaw.get(ch, y1, x0)
-                    val p11 = baseRaw.get(ch, y1, x1)
+                // Sample base RAW channel: ch 0=R, 1=G1, 2=G2, 3=B
+                fun sampleChannel(ch: Int): Float {
+                    val cOffset = ch * baseHW
+                    val p00 = baseData[cOffset + y0Offset + x0]
+                    val p10 = baseData[cOffset + y0Offset + x1]
+                    val p01 = baseData[cOffset + y1Offset + x0]
+                    val p11 = baseData[cOffset + y1Offset + x1]
                     return (p00 * (1f - wx) + p10 * wx) * (1f - wy) + (p01 * (1f - wx) + p11 * wx) * wy
                 }
 
-                val baseR = sampleRaw(0)
-                val baseG = (sampleRaw(1) + sampleRaw(2)) * 0.5f
-                val baseB = sampleRaw(3)
+                val baseR = sampleChannel(0)
+                val baseG = (sampleChannel(1) + sampleChannel(2)) * 0.5f
+                val baseB = sampleChannel(3)
 
-                val resR = rgbResidual.get(0, y, x) * 0.25f
-                val resG = rgbResidual.get(1, y, x) * 0.25f
-                val resB = rgbResidual.get(2, y, x) * 0.25f
+                val outIdx = outRowOffset + x
+                val resR = resData[outIdx] * 0.25f
+                val resG = resData[resHW + outIdx] * 0.25f
+                val resB = resData[2 * resHW + outIdx] * 0.25f
 
                 // Photometrically tone-mapped high-resolution RGB (clamped to 0..255)
                 val rInt = (max(0f, min(1f, baseR + resR)) * 255f + 0.5f).toInt()
                 val gInt = (max(0f, min(1f, baseG + resG)) * 255f + 0.5f).toInt()
                 val bInt = (max(0f, min(1f, baseB + resB)) * 255f + 0.5f).toInt()
 
-                pixels[y * outW + x] = Color.rgb(rInt, gInt, bInt)
+                pixels[outIdx] = Color.rgb(rInt, gInt, bInt)
             }
         }
 
@@ -574,72 +618,184 @@ class DbsrModel(private val weights: Map<String, ConvWeights>) {
     }
 
     /**
-     * Highly optimized 2D convolution with 3x3 kernel and optional activation.
+     * Highly optimized 2D convolution with 3x3 kernel, multithreaded channel parallelism,
+     * and sequential memory cache alignment.
      */
     private fun conv2d(input: Tensor, output: Tensor, weights: ConvWeights, relu: Boolean) {
         val inC = input.c
         val h = input.h
         val w = input.w
         val outC = output.c
+        val hw = h * w
+        val inData = input.data
+        val outData = output.data
+        val weightsArr = weights.weights
+        val biasArr = weights.bias
 
-        for (o in 0 until outC) {
-            val b = weights.bias[o]
-            for (y in 0 until h) {
-                val y0 = max(0, y - 1)
-                val y1 = y
-                val y2 = min(h - 1, y + 1)
+        // Multi-core hardware thread distribution
+        val numThreads = Runtime.getRuntime().availableProcessors().coerceIn(1, 8)
+        if (outC >= 4 && numThreads > 1) {
+            val chunkSize = (outC + numThreads - 1) / numThreads
+            val latch = java.util.concurrent.CountDownLatch(numThreads)
+            for (t in 0 until numThreads) {
+                val startO = t * chunkSize
+                val endO = min(outC, startO + chunkSize)
+                if (startO >= endO) {
+                    latch.countDown()
+                    continue
+                }
+                java.util.concurrent.ForkJoinPool.commonPool().execute {
+                    try {
+                        computeConvSlice(startO, endO, inC, h, w, hw, inData, outData, weightsArr, biasArr, relu)
+                    } finally {
+                        latch.countDown()
+                    }
+                }
+            }
+            latch.await()
+        } else {
+            computeConvSlice(0, outC, inC, h, w, hw, inData, outData, weightsArr, biasArr, relu)
+        }
+    }
 
+    private fun computeConvSlice(
+        startO: Int,
+        endO: Int,
+        inC: Int,
+        h: Int,
+        w: Int,
+        hw: Int,
+        inData: FloatArray,
+        outData: FloatArray,
+        weightsArr: FloatArray,
+        biasArr: FloatArray,
+        relu: Boolean
+    ) {
+        for (o in startO until endO) {
+            val b = biasArr[o]
+            val outChanOffset = o * hw
+            java.util.Arrays.fill(outData, outChanOffset, outChanOffset + hw, b)
+
+            for (i in 0 until inC) {
+                val inChanOffset = i * hw
+                val wBase = (o * inC + i) * 9
+                val w00 = weightsArr[wBase + 0]
+                val w01 = weightsArr[wBase + 1]
+                val w02 = weightsArr[wBase + 2]
+                val w10 = weightsArr[wBase + 3]
+                val w11 = weightsArr[wBase + 4]
+                val w12 = weightsArr[wBase + 5]
+                val w20 = weightsArr[wBase + 6]
+                val w21 = weightsArr[wBase + 7]
+                val w22 = weightsArr[wBase + 8]
+
+                // Fast branch-free interior loop
+                for (y in 1 until h - 1) {
+                    val rowMid = inChanOffset + y * w
+                    val rowPrev = rowMid - w
+                    val rowNext = rowMid + w
+                    val outRow = outChanOffset + y * w
+
+                    var x = 1
+                    while (x < w - 1) {
+                        val sum = inData[rowPrev + x - 1] * w00 +
+                                  inData[rowPrev + x]     * w01 +
+                                  inData[rowPrev + x + 1] * w02 +
+                                  inData[rowMid + x - 1]  * w10 +
+                                  inData[rowMid + x]      * w11 +
+                                  inData[rowMid + x + 1]  * w12 +
+                                  inData[rowNext + x - 1] * w20 +
+                                  inData[rowNext + x]     * w21 +
+                                  inData[rowNext + x + 1] * w22
+
+                        outData[outRow + x] += sum
+                        x++
+                    }
+                }
+
+                // Boundary rows & columns handling with coordinate clamping
                 for (x in 0 until w) {
-                    val x0 = max(0, x - 1)
-                    val x1 = x
-                    val x2 = min(w - 1, x + 1)
-
-                    var sum = b
-
-                    for (i in 0 until inC) {
-                        sum += input.get(i, y0, x0) * weights.getWeight(o, i, 0, 0)
-                        sum += input.get(i, y0, x1) * weights.getWeight(o, i, 0, 1)
-                        sum += input.get(i, y0, x2) * weights.getWeight(o, i, 0, 2)
-
-                        sum += input.get(i, y1, x0) * weights.getWeight(o, i, 1, 0)
-                        sum += input.get(i, y1, x1) * weights.getWeight(o, i, 1, 1)
-                        sum += input.get(i, y1, x2) * weights.getWeight(o, i, 1, 2)
-
-                        sum += input.get(i, y2, x0) * weights.getWeight(o, i, 2, 0)
-                        sum += input.get(i, y2, x1) * weights.getWeight(o, i, 2, 1)
-                        sum += input.get(i, y2, x2) * weights.getWeight(o, i, 2, 2)
+                    outData[outChanOffset + x] += computeBorderPixel(0, x, inChanOffset, h, w, inData, w00, w01, w02, w10, w11, w12, w20, w21, w22)
+                    if (h > 1) {
+                        outData[outChanOffset + (h - 1) * w + x] += computeBorderPixel(h - 1, x, inChanOffset, h, w, inData, w00, w01, w02, w10, w11, w12, w20, w21, w22)
                     }
-
-                    if (relu) {
-                        sum = if (sum > 0f) sum else sum * 0.1f // LeakyReLU
+                }
+                for (y in 1 until h - 1) {
+                    outData[outChanOffset + y * w] += computeBorderPixel(y, 0, inChanOffset, h, w, inData, w00, w01, w02, w10, w11, w12, w20, w21, w22)
+                    if (w > 1) {
+                        outData[outChanOffset + y * w + (w - 1)] += computeBorderPixel(y, w - 1, inChanOffset, h, w, inData, w00, w01, w02, w10, w11, w12, w20, w21, w22)
                     }
+                }
+            }
 
-                    output.set(o, y, x, sum)
+            if (relu) {
+                for (idx in outChanOffset until outChanOffset + hw) {
+                    val v = outData[idx]
+                    outData[idx] = if (v > 0f) v else v * 0.1f // LeakyReLU
                 }
             }
         }
     }
 
+    private fun computeBorderPixel(
+        y: Int,
+        x: Int,
+        inChanOffset: Int,
+        h: Int,
+        w: Int,
+        inData: FloatArray,
+        w00: Float, w01: Float, w02: Float,
+        w10: Float, w11: Float, w12: Float,
+        w20: Float, w21: Float, w22: Float
+    ): Float {
+        val y0 = max(0, y - 1)
+        val y1 = y
+        val y2 = min(h - 1, y + 1)
+        val x0 = max(0, x - 1)
+        val x1 = x
+        val x2 = min(w - 1, x + 1)
+
+        val r0 = inChanOffset + y0 * w
+        val r1 = inChanOffset + y1 * w
+        val r2 = inChanOffset + y2 * w
+
+        return inData[r0 + x0] * w00 + inData[r0 + x1] * w01 + inData[r0 + x2] * w02 +
+               inData[r1 + x0] * w10 + inData[r1 + x1] * w11 + inData[r1 + x2] * w12 +
+               inData[r2 + x0] * w20 + inData[r2 + x1] * w21 + inData[r2 + x2] * w22
+    }
+
     /**
-     * Sub-pixel convolution PixelShuffle(2x).
+     * Sub-pixel convolution PixelShuffle(2x) with direct 1D contiguous array indexing.
      * Rearranges [C*4, H, W] to [C, 2H, 2W].
      */
     private fun pixelShuffle2x(input: Tensor, output: Tensor, C: Int) {
         val inH = input.h
         val inW = input.w
+        val inHW = inH * inW
+        val outW = output.w
+        val outHW = output.h * outW
+        val inData = input.data
+        val outData = output.data
 
         for (c in 0 until C) {
-            for (y in 0 until inH) {
-                for (x in 0 until inW) {
-                    val p00 = input.get(c * 4 + 0, y, x)
-                    val p01 = input.get(c * 4 + 1, y, x)
-                    val p10 = input.get(c * 4 + 2, y, x)
-                    val p11 = input.get(c * 4 + 3, y, x)
+            val outChanOffset = c * outHW
+            val inBase0 = (c * 4 + 0) * inHW
+            val inBase1 = (c * 4 + 1) * inHW
+            val inBase2 = (c * 4 + 2) * inHW
+            val inBase3 = (c * 4 + 3) * inHW
 
-                    output.set(c, y * 2 + 0, x * 2 + 0, p00)
-                    output.set(c, y * 2 + 0, x * 2 + 1, p01)
-                    output.set(c, y * 2 + 1, x * 2 + 0, p10)
-                    output.set(c, y * 2 + 1, x * 2 + 1, p11)
+            for (y in 0 until inH) {
+                val inRowOffset = y * inW
+                val outRow0 = outChanOffset + (y * 2) * outW
+                val outRow1 = outChanOffset + (y * 2 + 1) * outW
+
+                for (x in 0 until inW) {
+                    val inIdx = inRowOffset + x
+                    val outX = x * 2
+                    outData[outRow0 + outX] = inData[inBase0 + inIdx]
+                    outData[outRow0 + outX + 1] = inData[inBase1 + inIdx]
+                    outData[outRow1 + outX] = inData[inBase2 + inIdx]
+                    outData[outRow1 + outX + 1] = inData[inBase3 + inIdx]
                 }
             }
         }
@@ -649,15 +805,26 @@ class DbsrModel(private val weights: Map<String, ConvWeights>) {
         val C = input.c
         val inH = input.h
         val inW = input.w
+        val inHW = inH * inW
         val outH = output.h
         val outW = output.w
+        val outHW = outH * outW
+        val inData = input.data
+        val outData = output.data
 
         for (c in 0 until C) {
+            val inChanOffset = c * inHW
+            val outChanOffset = c * outHW
+
             for (y in 0 until outH) {
                 val sy = (y.toFloat() / outH) * (inH - 1)
                 val y0 = sy.toInt()
                 val y1 = min(inH - 1, y0 + 1)
                 val wy = sy - y0
+
+                val inRow0 = inChanOffset + y0 * inW
+                val inRow1 = inChanOffset + y1 * inW
+                val outRow = outChanOffset + y * outW
 
                 for (x in 0 until outW) {
                     val sx = (x.toFloat() / outW) * (inW - 1)
@@ -665,13 +832,12 @@ class DbsrModel(private val weights: Map<String, ConvWeights>) {
                     val x1 = min(inW - 1, x0 + 1)
                     val wx = sx - x0
 
-                    val p00 = input.get(c, y0, x0)
-                    val p10 = input.get(c, y0, x1)
-                    val p01 = input.get(c, y1, x0)
-                    val p11 = input.get(c, y1, x1)
+                    val p00 = inData[inRow0 + x0]
+                    val p10 = inData[inRow0 + x1]
+                    val p01 = inData[inRow1 + x0]
+                    val p11 = inData[inRow1 + x1]
 
-                    val v = (p00 * (1f - wx) + p10 * wx) * (1f - wy) + (p01 * (1f - wx) + p11 * wx) * wy
-                    output.set(c, y, x, v)
+                    outData[outRow + x] = (p00 * (1f - wx) + p10 * wx) * (1f - wy) + (p01 * (1f - wx) + p11 * wx) * wy
                 }
             }
         }

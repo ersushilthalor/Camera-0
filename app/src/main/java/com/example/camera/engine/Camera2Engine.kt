@@ -172,7 +172,7 @@ class Camera2Engine(private val context: Context) {
     private val _isAfLockedFlow = MutableStateFlow(false)
     val isAfLockedFlow: StateFlow<Boolean> = _isAfLockedFlow.asStateFlow()
 
-    val dollyZoomEngine = DollyZoomEngine()
+    val dollyZoomEngine = DollyZoomEngine(context)
     val nightFusionProcessor = NightFusionProcessor()
     val gyroStabilizationEngine = GyroStabilizationEngine(context)
 
@@ -943,6 +943,17 @@ class Camera2Engine(private val context: Context) {
             gyroStabilizationEngine.start()
         }
 
+        if (mode == CameraMode.DOLLY_ZOOM) {
+            dollyZoomEngine.start()
+            if (!dollyZoomEngine.dollyState.value.isCalibrated) {
+                backgroundHandler?.postDelayed({
+                    calibrateDollyZoom()
+                }, 350)
+            }
+        } else {
+            dollyZoomEngine.stop()
+        }
+
         val needsReconfigure = (wasPhotoOrPortrait != isPhotoOrPortrait) ||
                 (wasMore && isPhotoOrPortrait) ||
                 (captureSession == null) ||
@@ -1549,8 +1560,7 @@ class Camera2Engine(private val context: Context) {
                 builder.set(CaptureRequest.LENS_FOCUS_DISTANCE, manualFocusDistance)
             }
             FocusMode.CONTINUOUS -> {
-                val mode = if (currentMode == CameraMode.VIDEO || currentMode == CameraMode.CINEMA ||
-                    currentMode == CameraMode.DOLLY_ZOOM) {
+                val mode = if (currentMode == CameraMode.VIDEO || currentMode == CameraMode.CINEMA) {
                     CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_VIDEO
                 } else {
                     CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE
@@ -2602,22 +2612,16 @@ class Camera2Engine(private val context: Context) {
         val hasRaw = caps.supportsRaw && imageReaderRaw != null
         val readerRaw = imageReaderRaw
 
-        // Calculate digital zoom crop region
-        val activePhotoRes = _selectedPhotoResolution.value ?: caps.supportedPhotoResolutions.firstOrNull()?.let { CameraResolution(it.width, it.height) }
-        val sensorW = activePhotoRes?.width ?: 4032
-        val sensorH = activePhotoRes?.height ?: 3024
-
-        val zoomRatio = currentZoom.coerceAtLeast(1.0f)
-        val cropW = (sensorW / zoomRatio).toInt().coerceAtLeast(64)
-        val cropH = (sensorH / zoomRatio).toInt().coerceAtLeast(64)
-        val cropX = (sensorW - cropW) / 2
-        val cropY = (sensorH - cropH) / 2
-        val zoomCropRect = Rect(cropX, cropY, cropX + cropW, cropY + cropH)
         val rotationDeg = getCaptureJpegOrientation()
 
         val capturedTensors = mutableListOf<com.example.camera.dbsr.Tensor>()
-        var baseRawTensor: com.example.camera.dbsr.Tensor? = null
         val isFirstSaved = java.util.concurrent.atomic.AtomicBoolean(false)
+        val isProcessingLaunched = java.util.concurrent.atomic.AtomicBoolean(false)
+        var baseBitmap: Bitmap? = null
+        var baseUri: Uri? = null
+        var firstBytes: ByteArray? = null
+        var targetW = 80
+        var targetH = 60
 
         readerJpeg.setOnImageAvailableListener({ reader ->
             val image = reader.acquireNextImage() ?: return@setOnImageAvailableListener
@@ -2629,33 +2633,42 @@ class Camera2Engine(private val context: Context) {
             engineScope.launch(Dispatchers.IO) {
                 // Instantly save base frame to MediaStore so user UI never freezes
                 if (isFirstSaved.compareAndSet(false, true)) {
-                    val baseUri = saveJpegBytesToMediaStore(bytes)
+                    firstBytes = bytes
+                    val uri = saveJpegBytesToMediaStore(bytes)
+                    baseUri = uri
                     _isCapturing.value = false
                     withContext(Dispatchers.Main) {
-                        onComplete(baseUri)
+                        onComplete(uri)
                     }
 
-                    val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
-                    if (bitmap != null) {
-                        val tensor = dbsrEngine.extractTensorFromBitmap(bitmap, zoomCropRect)
+                    val bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                    if (bmp != null) {
+                        baseBitmap = bmp
+                        val dims = dbsrEngine.calculateTargetProcessingDimensions(bmp.width, bmp.height, quality)
+                        targetW = dims.first
+                        targetH = dims.second
+                        val tensor = dbsrEngine.extractTensorFromBitmap(bmp, targetW, targetH)
                         synchronized(capturedTensors) {
-                            if (baseRawTensor == null) baseRawTensor = tensor
                             capturedTensors.add(tensor)
                         }
                     }
                 } else if (!hasRaw) {
-                    val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
-                    if (bitmap != null) {
-                        val tensor = dbsrEngine.extractTensorFromBitmap(bitmap, zoomCropRect)
+                    val bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                    if (bmp != null) {
+                        val tensor = dbsrEngine.extractTensorFromBitmap(bmp, targetW, targetH)
                         synchronized(capturedTensors) {
                             capturedTensors.add(tensor)
                         }
+                        bmp.recycle()
                     }
                 }
 
                 val currentTotal = synchronized(capturedTensors) { capturedTensors.size }
-                if (currentTotal >= burstCount) {
-                    launchDbsrProcessing(capturedTensors, baseRawTensor, rotationDeg, quality)
+                if (currentTotal >= burstCount && isProcessingLaunched.compareAndSet(false, true)) {
+                    val baseBmp = baseBitmap
+                    if (baseBmp != null) {
+                        launchDbsrProcessing(capturedTensors, baseBmp, baseUri, firstBytes, quality)
+                    }
                 }
             }
         }, backgroundHandler)
@@ -2665,9 +2678,8 @@ class Camera2Engine(private val context: Context) {
                 val rawImage = reader.acquireNextImage() ?: return@setOnImageAvailableListener
                 engineScope.launch(Dispatchers.IO) {
                     try {
-                        val rawTensor = dbsrEngine.extractBayerTensorFromRaw(rawImage, zoomCropRect)
+                        val rawTensor = dbsrEngine.extractBayerTensorFromRaw(rawImage, targetW, targetH)
                         synchronized(capturedTensors) {
-                            if (baseRawTensor == null) baseRawTensor = rawTensor
                             capturedTensors.add(rawTensor)
                         }
                     } catch (e: Exception) {
@@ -2677,8 +2689,11 @@ class Camera2Engine(private val context: Context) {
                     }
 
                     val currentTotal = synchronized(capturedTensors) { capturedTensors.size }
-                    if (currentTotal >= burstCount) {
-                        launchDbsrProcessing(capturedTensors, baseRawTensor, rotationDeg, quality)
+                    if (currentTotal >= burstCount && isProcessingLaunched.compareAndSet(false, true)) {
+                        val baseBmp = baseBitmap
+                        if (baseBmp != null) {
+                            launchDbsrProcessing(capturedTensors, baseBmp, baseUri, firstBytes, quality)
+                        }
                     }
                 }
             }, backgroundHandler)
@@ -2723,8 +2738,9 @@ class Camera2Engine(private val context: Context) {
 
     private fun launchDbsrProcessing(
         burstTensors: List<com.example.camera.dbsr.Tensor>,
-        baseRaw: com.example.camera.dbsr.Tensor?,
-        rotationDeg: Int,
+        baseBitmap: Bitmap,
+        baseUri: Uri?,
+        originalBytes: ByteArray?,
         quality: com.example.camera.dbsr.AiZoomQuality
     ) {
         engineScope.launch(Dispatchers.Default) {
@@ -2732,19 +2748,33 @@ class Camera2Engine(private val context: Context) {
                 _isAiZoomProcessing.value = true
                 _aiZoomProgress.value = 0.05f
 
-                val base = baseRaw ?: burstTensors.firstOrNull() ?: return@launch
                 val frames = burstTensors.take(quality.burstCount)
 
                 val enhancedBitmap = dbsrEngine.processBurst(
                     burstFrames = frames,
-                    baseRawTensor = base,
-                    rotationDegrees = rotationDeg,
+                    baseBitmap = baseBitmap,
                     quality = quality,
                     onProgress = { p -> _aiZoomProgress.value = p }
                 )
 
-                val enhancedUri = dbsrEngine.saveAiZoomImageToMediaStore(enhancedBitmap)
+                val finalUri = dbsrEngine.saveAiZoomImage(
+                    context = context,
+                    bitmap = enhancedBitmap,
+                    baseUri = baseUri,
+                    originalBytes = originalBytes
+                )
+
                 enhancedBitmap.recycle()
+                baseBitmap.recycle()
+
+                if (finalUri != null) {
+                    _lastCapturedMedia.value = CapturedMedia(
+                        uri = finalUri,
+                        isVideo = false,
+                        timestamp = System.currentTimeMillis(),
+                        displayName = "AI Zoom Photo"
+                    )
+                }
 
                 updateStorageStats()
                 _isAiZoomProcessing.value = false
@@ -3133,6 +3163,7 @@ class Camera2Engine(private val context: Context) {
             if (isSoftwareCinema) {
                 isSoftwareCinemaRecording = true
 
+                val orientationHint = getVideoOrientationHint()
                 val recorderSurface = cinemaSoftwareRecorder.startRecording(
                     destFile = tempFile,
                     width = videoRes.width,
@@ -3141,7 +3172,8 @@ class Camera2Engine(private val context: Context) {
                     bitrate = bitrate,
                     codec = cinemaCodec,
                     bitDepth = if (is10BitRequested || cinemaCodec == CinemaCodec.PRORES) LogBitDepth.BIT_10 else LogBitDepth.BIT_8,
-                    isAudioEnabled = isAudioEnabled
+                    isAudioEnabled = isAudioEnabled,
+                    orientationHint = orientationHint
                 )
                 val previewSurf = previewSurface ?: return
                 val surfaces = listOf(previewSurf, recorderSurface)

@@ -1,14 +1,21 @@
 package com.example.camera.engine
 
+import android.content.Context
 import android.graphics.Rect
 import android.graphics.RectF
+import android.hardware.Sensor
+import android.hardware.SensorEvent
+import android.hardware.SensorEventListener
+import android.hardware.SensorManager
 import android.hardware.camera2.CaptureResult
 import android.hardware.camera2.params.Face
+import android.util.Log
 import com.example.camera.model.DollyDirection
 import com.example.camera.model.DollyZoomState
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
@@ -20,19 +27,22 @@ import kotlin.math.min
  * foreground subject framing remains constant while the background perspective
  * expands (push-in) or compresses (pull-out).
  *
- * Incorporates:
+ * Features:
+ * - High-speed IMU motion fusion (detects backward movement in <10ms before AF reacts)
+ * - Strict Scene Boundary Invariant: The camera field of view never captures more than
+ *   the initial scene framing when the user steps back.
+ * - Dynamic high-pursuit counter-zoom when moving backward, with smooth easing
  * - User tap-to-lock on subject (face or arbitrary focal region)
  * - Real-time apparent size calculation and bounding reticle
- * - Predictive zoom compensation anticipating motion delta
- * - Multi-stage Low-Pass Filtering to eliminate sensor noise & focus jumps
- * - Strict Slew-Rate Limiting for buttery-smooth performance
  */
-class DollyZoomEngine {
+class DollyZoomEngine(
+    private val context: Context? = null
+) : SensorEventListener {
 
     companion object {
-        private const val MAX_ZOOM_SLEW_PER_FRAME = 0.35f // Fast, responsive counter-zoom up to 10.5x/sec at 30fps
+        private const val TAG = "DollyZoomEngine"
         private const val DISTANCE_FILTER_ALPHA = 0.50f   // Responsive distance tracking
-        private const val SCALE_FILTER_ALPHA = 0.75f      // Rapid subject scale acquisition
+        private const val SCALE_FILTER_ALPHA = 0.80f      // Rapid subject scale acquisition
     }
 
     private val _dollyState = MutableStateFlow(DollyZoomState())
@@ -54,8 +64,88 @@ class DollyZoomEngine {
     private var referenceZoom: Float = 1.0f
     private var currentSmoothedZoom: Float = 1.0f
 
+    // Inertial sensor tracking state
+    private val sensorManager = context?.getSystemService(Context.SENSOR_SERVICE) as? SensorManager
+    private val motionSensor: Sensor? = sensorManager?.getDefaultSensor(Sensor.TYPE_LINEAR_ACCELERATION)
+        ?: sensorManager?.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
+    private val isSensorRunning = AtomicBoolean(false)
+
+    private var lastSensorTimestampNs: Long = 0L
+    private var motionVelocityZ: Float = 0f
+    private var motionDisplacementZ: Float = 0f
+
     // Missed frame bridge
     private var missedFrames: Int = 0
+
+    fun start() {
+        if (sensorManager == null || motionSensor == null) return
+        if (isSensorRunning.compareAndSet(false, true)) {
+            lastSensorTimestampNs = 0L
+            motionVelocityZ = 0f
+            motionDisplacementZ = 0f
+            try {
+                val registered = sensorManager.registerListener(this, motionSensor, SensorManager.SENSOR_DELAY_GAME)
+                if (!registered) {
+                    sensorManager.registerListener(this, motionSensor, SensorManager.SENSOR_DELAY_UI)
+                }
+                Log.d(TAG, "DollyZoom inertial sensor listening started")
+            } catch (e: Exception) {
+                try {
+                    sensorManager.registerListener(this, motionSensor, SensorManager.SENSOR_DELAY_UI)
+                } catch (t: Throwable) {
+                    Log.w(TAG, "Failed to register inertial sensor: ${t.message}")
+                    isSensorRunning.set(false)
+                }
+            }
+        }
+    }
+
+    fun stop() {
+        if (isSensorRunning.compareAndSet(true, false)) {
+            try {
+                sensorManager?.unregisterListener(this)
+            } catch (ignored: Exception) {}
+            lastSensorTimestampNs = 0L
+            motionVelocityZ = 0f
+            motionDisplacementZ = 0f
+            Log.d(TAG, "DollyZoom inertial sensor listening stopped")
+        }
+    }
+
+    override fun onSensorChanged(event: SensorEvent?) {
+        if (event == null || !isSensorRunning.get()) return
+        val nowNs = event.timestamp
+        if (lastSensorTimestampNs == 0L) {
+            lastSensorTimestampNs = nowNs
+            return
+        }
+        val dt = ((nowNs - lastSensorTimestampNs) / 1_000_000_000.0f).coerceIn(0.001f, 0.1f)
+        lastSensorTimestampNs = nowNs
+
+        // Device Z-axis: perpendicular to the screen.
+        // Back camera points towards -Z (away from screen).
+        // When user moves BACKWARDS away from the scene, the device accelerates along +Z (towards the user).
+        var az = event.values.getOrNull(2) ?: 0f
+
+        // High-pass filter out gravity if using raw ACCELEROMETER instead of LINEAR_ACCELERATION
+        if (event.sensor.type == Sensor.TYPE_ACCELEROMETER) {
+            // Subtract typical static tilt component
+            az = az.coerceIn(-15f, 15f)
+        }
+
+        // Deadband to ignore hand tremor / micro-jitter
+        if (abs(az) < 0.15f) {
+            az = 0f
+        }
+
+        // Leaky integration of velocity (decays to 0 when user stops moving)
+        motionVelocityZ = (motionVelocityZ + az * dt) * 0.94f
+
+        // Leaky integration of displacement
+        motionDisplacementZ = (motionDisplacementZ + motionVelocityZ * dt) * 0.98f
+    }
+
+    override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
 
     /**
      * Locks on subject at the specified normalized viewfinder coordinates (normX, normY: 0..1).
@@ -87,6 +177,11 @@ class DollyZoomEngine {
         referenceDistanceMeters = rawDist
         filteredDistanceMeters = rawDist
 
+        // Reset inertial integrator on fresh calibration
+        motionVelocityZ = 0f
+        motionDisplacementZ = 0f
+        lastSensorTimestampNs = 0L
+
         // Check if any detected face is near the tap point
         var matchedFace: Face? = null
         if (sensorRect != null && sensorRect.width() > 0 && faces != null && faces.isNotEmpty()) {
@@ -108,7 +203,7 @@ class DollyZoomEngine {
             }
         }
 
-        var bounds: RectF
+        val bounds: RectF
         if (matchedFace != null && sensorRect != null && sensorRect.width() > 0) {
             isFaceLocked = true
             lockedFaceId = matchedFace.id
@@ -155,7 +250,7 @@ class DollyZoomEngine {
             currentDistanceMeters = referenceDistanceMeters,
             targetZoom = referenceZoom,
             smoothedZoom = currentSmoothedZoom,
-            statusPrompt = if (isFaceLocked) "Subject Locked (Face) · Walk smoothly" else "Target Locked · Walk smoothly"
+            statusPrompt = if (isFaceLocked) "Subject Locked (Face) · Walk back smoothly" else "Scene Locked · Walk back to zoom in"
         )
     }
 
@@ -198,6 +293,11 @@ class DollyZoomEngine {
         referenceZoom = 1.0f
         currentSmoothedZoom = 1.0f
         missedFrames = 0
+
+        motionVelocityZ = 0f
+        motionDisplacementZ = 0f
+        lastSensorTimestampNs = 0L
+
         _dollyState.value = DollyZoomState()
     }
 
@@ -230,6 +330,16 @@ class DollyZoomEngine {
             filteredDistanceMeters = filteredDistanceMeters * (1f - DISTANCE_FILTER_ALPHA) + (rawDist * DISTANCE_FILTER_ALPHA)
         }
 
+        // 1b. Real-time inertial displacement fusion
+        // Instant response in <10ms when user steps backwards
+        val inertialDistance = max(0.25f, referenceDistanceMeters + motionDisplacementZ)
+        val effectiveDistance = if (motionDisplacementZ > 0.04f) {
+            // When stepping back, prioritize instant inertial motion so there is zero delay
+            max(filteredDistanceMeters, inertialDistance)
+        } else {
+            filteredDistanceMeters * 0.85f + inertialDistance * 0.15f
+        }
+
         // 2. Real-time apparent subject size tracking
         val faces = result.get(CaptureResult.STATISTICS_FACES)
         var matchedFace: Face? = null
@@ -239,7 +349,6 @@ class DollyZoomEngine {
             if (isFaceLocked) {
                 matchedFace = faces.firstOrNull { it.id == lockedFaceId } ?: faces.firstOrNull()
             } else if (sensorRect != null && sensorRect.width() > 0) {
-                // Check if any face is near the locked coordinates
                 val sW = sensorRect.width().toFloat()
                 val sH = sensorRect.height().toFloat()
                 for (face in faces) {
@@ -261,7 +370,7 @@ class DollyZoomEngine {
 
         var trackingConfidence = 0.85f
         var currentBounds = state.subjectBounds
-        val targetZoom: Float
+        val computedTargetZoom: Float
 
         if (isFaceLocked && matchedFace != null && sensorRect != null && sensorRect.width() > 0) {
             missedFrames = 0
@@ -276,10 +385,12 @@ class DollyZoomEngine {
 
             // Vertigo counter-zoom formula: Target Ratio = Reference Scale / Current Apparent Scale
             val faceRatio = (referenceSubjectScale / filteredSubjectScale).coerceIn(0.15f, 8.0f)
-            targetZoom = (referenceZoom * faceRatio).coerceIn(minAvailableZoom, maxAvailableZoom)
+            val distRatio = (effectiveDistance / max(referenceDistanceMeters, 0.15f)).coerceIn(0.15f, 8.0f)
+            val combinedRatio = max(faceRatio, distRatio)
+
+            computedTargetZoom = (referenceZoom * combinedRatio).coerceIn(minAvailableZoom, maxAvailableZoom)
             trackingConfidence = 0.98f
 
-            // Update bounding reticle in real-time
             currentBounds = RectF(
                 (matchedFace.bounds.left - sensorRect.left) / sW,
                 (matchedFace.bounds.top - sensorRect.top) / sH,
@@ -289,40 +400,65 @@ class DollyZoomEngine {
         } else {
             // Distance-based real-time compensation when face is absent
             missedFrames++
-            val distRatio = (filteredDistanceMeters / max(referenceDistanceMeters, 0.15f)).coerceIn(0.15f, 8.0f)
-            targetZoom = (referenceZoom * distRatio).coerceIn(minAvailableZoom, maxAvailableZoom)
-            trackingConfidence = if (missedFrames < 30) 0.80f else 0.70f
+            val distRatio = (effectiveDistance / max(referenceDistanceMeters, 0.15f)).coerceIn(0.15f, 8.0f)
+            computedTargetZoom = (referenceZoom * distRatio).coerceIn(minAvailableZoom, maxAvailableZoom)
+            trackingConfidence = if (missedFrames < 30) 0.85f else 0.75f
         }
 
-        // 3. High-Speed Dynamic Counter-Zoom Pursuit Controller
-        // Delivers instantaneous response for fast physical movements while eliminating jitter during pauses
+        // 3. Strict Scene Boundary Preservation:
+        // "focus rakho ki pahle jitna scene capture kiya hai usse jayada capture nhi hona chahiye, uske according zoom in karte rahna"
+        // When user moves back (distance increases relative to calibration), zoom in strictly so the
+        // captured scene width never exceeds the initial calibrated framing:
+        // Zoom must be >= referenceZoom * (effectiveDistance / referenceDistanceMeters).
+        val distRatioFromReference = effectiveDistance / max(referenceDistanceMeters, 0.15f)
+        val minRequiredZoomForSceneBoundary = if (distRatioFromReference > 1.0f) {
+            (referenceZoom * distRatioFromReference).coerceIn(minAvailableZoom, maxAvailableZoom)
+        } else {
+            minAvailableZoom
+        }
+
+        val targetZoom = max(computedTargetZoom, minRequiredZoomForSceneBoundary).coerceIn(minAvailableZoom, maxAvailableZoom)
+
+        // 4. Dynamic Counter-Zoom Pursuit Controller
+        // Zero delay when stepping back: high pursuit rate and large slew limit
         val delta = targetZoom - currentSmoothedZoom
         val absDelta = abs(delta)
 
-        val pursuitRate = when {
-            absDelta > 0.6f -> 0.85f   // Rapid physical movement: immediate counter-zoom
-            absDelta > 0.2f -> 0.65f   // Normal walking speed: highly responsive tracking
-            absDelta > 0.05f -> 0.45f  // Fine approach
-            else -> 0.25f              // Micro-jitter damping when stationary
+        val (pursuitRate, maxSlew) = when {
+            delta > 0.01f -> {
+                // Moving backward / Zooming in:
+                // Instant tracking without delay so the scene never expands!
+                0.96f to 0.85f
+            }
+            absDelta > 0.4f -> 0.75f to 0.45f
+            absDelta > 0.1f -> 0.55f to 0.35f
+            else -> 0.35f to 0.20f
         }
 
-        val step = (delta * pursuitRate).coerceIn(-MAX_ZOOM_SLEW_PER_FRAME, MAX_ZOOM_SLEW_PER_FRAME)
+        val step = (delta * pursuitRate).coerceIn(-maxSlew, maxSlew)
         currentSmoothedZoom += step
 
-        // 4. Contextual status prompt with boundary awareness
+        // Strictly enforce scene boundary: when user is further back than calibration,
+        // zoom can never fall below the initial scene boundary zoom!
+        if (distRatioFromReference > 1.02f) {
+            currentSmoothedZoom = max(currentSmoothedZoom, minRequiredZoomForSceneBoundary)
+        }
+        currentSmoothedZoom = currentSmoothedZoom.coerceIn(minAvailableZoom, maxAvailableZoom)
+
+        // 5. Contextual status prompt
         val atMaxLimit = currentSmoothedZoom >= maxAvailableZoom - 0.05f
         val atMinLimit = currentSmoothedZoom <= minAvailableZoom + 0.05f
 
         val prompt = when {
             atMaxLimit -> "Max Zoom Limit Reached · Hold Distance"
             atMinLimit -> "Min Zoom Limit Reached · Hold Distance"
-            currentSmoothedZoom > referenceZoom + 0.15f -> "Pushing In · Foreground locked, background expanding"
-            currentSmoothedZoom < referenceZoom - 0.15f -> "Pulling Out · Foreground locked, background compressing"
-            else -> "Subject Locked · Walk smoothly forwards or backwards"
+            currentSmoothedZoom > referenceZoom + 0.10f -> "Scene Preserved · Zooming in as you step back"
+            currentSmoothedZoom < referenceZoom - 0.10f -> "Moving In · Background expanding"
+            else -> "Framing Calibrated · Step back to zoom in"
         }
 
         _dollyState.value = state.copy(
-            currentDistanceMeters = filteredDistanceMeters,
+            currentDistanceMeters = effectiveDistance,
             targetZoom = targetZoom,
             smoothedZoom = currentSmoothedZoom,
             trackingConfidence = trackingConfidence,

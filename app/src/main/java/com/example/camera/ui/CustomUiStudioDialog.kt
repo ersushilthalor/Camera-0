@@ -3,6 +3,7 @@ package com.example.camera.ui
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
+import java.io.File
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.*
@@ -99,9 +100,45 @@ fun CustomUiStudioDialog(
     var uploadedPhotoBitmap by remember { mutableStateOf<Bitmap?>(null) }
     var uploadedPhotoUri by remember { mutableStateOf<Uri?>(null) }
     var extractedPalette by remember { mutableStateOf<ExtractedUiPalette?>(null) }
-    var showPhotoAsSimulatedWallpaper by remember { mutableStateOf(true) }
-    var photoWallpaperOpacity by remember { mutableFloatStateOf(0.45f) }
+    var showPhotoAsSimulatedWallpaper by remember { mutableStateOf(initialConfig.customUiPhotoOverlayOpacity > 0f || initialConfig.customUiPhotoUri != null) }
+    var photoWallpaperOpacity by remember { mutableFloatStateOf(if (initialConfig.customUiPhotoOverlayOpacity > 0f) initialConfig.customUiPhotoOverlayOpacity else 0.45f) }
     var isExtractingColors by remember { mutableStateOf(false) }
+
+    // Load existing custom UI photo if available
+    LaunchedEffect(initialConfig.customUiPhotoUri) {
+        val photoUriStr = initialConfig.customUiPhotoUri
+        if (!photoUriStr.isNullOrBlank() && uploadedPhotoBitmap == null) {
+            val parsedUri = Uri.parse(photoUriStr)
+            uploadedPhotoUri = parsedUri
+            val bitmap = withContext(Dispatchers.IO) {
+                try {
+                    val input: InputStream? = context.contentResolver.openInputStream(parsedUri)
+                    val full = BitmapFactory.decodeStream(input)
+                    input?.close()
+                    if (full != null) {
+                        val maxDim = 800
+                        val scale = min(1f, maxDim.toFloat() / max(full.width, full.height))
+                        if (scale < 1f) {
+                            Bitmap.createScaledBitmap(
+                                full,
+                                (full.width * scale).roundToInt(),
+                                (full.height * scale).roundToInt(),
+                                true
+                            )
+                        } else full
+                    } else null
+                } catch (e: Exception) {
+                    null
+                }
+            }
+            if (bitmap != null) {
+                uploadedPhotoBitmap = bitmap
+                extractedPalette = withContext(Dispatchers.Default) {
+                    extractPaletteFromBitmap(bitmap)
+                }
+            }
+        }
+    }
 
     // Save Preset Dialog State
     var showSavePresetDialog by remember { mutableStateOf(false) }
@@ -113,12 +150,26 @@ fun CustomUiStudioDialog(
         contract = ActivityResultContracts.PickVisualMedia()
     ) { uri: Uri? ->
         if (uri != null) {
-            uploadedPhotoUri = uri
             isExtractingColors = true
             coroutineScope.launch {
+                val persistentUri = withContext(Dispatchers.IO) {
+                    try {
+                        val localFile = File(context.filesDir, "custom_ui_wallpaper.png")
+                        context.contentResolver.openInputStream(uri)?.use { input ->
+                            localFile.outputStream().use { output ->
+                                input.copyTo(output)
+                            }
+                        }
+                        Uri.fromFile(localFile)
+                    } catch (e: Exception) {
+                        uri
+                    }
+                }
+                uploadedPhotoUri = persistentUri
+
                 val bitmap = withContext(Dispatchers.IO) {
                     try {
-                        val input: InputStream? = context.contentResolver.openInputStream(uri)
+                        val input: InputStream? = context.contentResolver.openInputStream(persistentUri)
                         val full = BitmapFactory.decodeStream(input)
                         input?.close()
                         // Downsample for fast UI display & palette analysis
@@ -148,7 +199,10 @@ fun CustomUiStudioDialog(
                     }
                     extractedPalette = palette
                     // Auto update photo URI in config
-                    config = config.copy(customUiPhotoUri = uri.toString())
+                    config = config.copy(
+                        customUiPhotoUri = persistentUri.toString(),
+                        customUiPhotoOverlayOpacity = if (showPhotoAsSimulatedWallpaper) photoWallpaperOpacity else 0.45f
+                    )
                 }
                 isExtractingColors = false
             }
@@ -243,21 +297,35 @@ fun CustomUiStudioDialog(
                                         )
                                     )
                                 },
-                                onToggleWallpaper = { showPhotoAsSimulatedWallpaper = it },
-                                onOpacityChange = { photoWallpaperOpacity = it },
+                                onToggleWallpaper = {
+                                    showPhotoAsSimulatedWallpaper = it
+                                    config = config.copy(
+                                        customUiPhotoOverlayOpacity = if (it) photoWallpaperOpacity else 0f
+                                    )
+                                },
+                                onOpacityChange = {
+                                    photoWallpaperOpacity = it
+                                    config = config.copy(
+                                        customUiPhotoOverlayOpacity = if (showPhotoAsSimulatedWallpaper) it else 0f
+                                    )
+                                },
                                 onApplyExtractedTheme = { palette ->
                                     config = config.copy(
                                         accentColorHex = palette.vibrantAccentHex,
                                         textColorHex = palette.textToneHex,
                                         iconColorHex = palette.iconTintHex,
-                                        shutterStyle = ShutterStyle.CLASSIC_WHITE
+                                        shutterStyle = ShutterStyle.CLASSIC_WHITE,
+                                        customUiPhotoOverlayOpacity = if (showPhotoAsSimulatedWallpaper) photoWallpaperOpacity else 0.45f
                                     )
                                 },
                                 onClearPhoto = {
                                     uploadedPhotoBitmap = null
                                     uploadedPhotoUri = null
                                     extractedPalette = null
-                                    config = config.copy(customUiPhotoUri = null)
+                                    config = config.copy(
+                                        customUiPhotoUri = null,
+                                        customUiPhotoOverlayOpacity = 0f
+                                    )
                                 }
                             )
 

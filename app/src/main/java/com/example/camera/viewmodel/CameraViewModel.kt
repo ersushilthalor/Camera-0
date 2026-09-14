@@ -174,6 +174,9 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         preferences.isAiZoomEnabled = enabled
         engine.isAiZoomEnabled = enabled
         if (enabled) {
+            viewModelScope.launch(Dispatchers.Default) {
+                engine.dbsrEngine.preload()
+            }
             showToast("AI Zoom (DBSR): ON")
         } else {
             showToast("AI Zoom (DBSR): OFF")
@@ -354,6 +357,11 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         engine.isRefocusPhotoEnabled = preferences.isRefocusPhotoEnabled
         engine.isAiZoomEnabled = preferences.isAiZoomEnabled
         engine.aiZoomQuality = preferences.aiZoomQuality
+        if (preferences.isAiZoomEnabled) {
+            viewModelScope.launch(Dispatchers.Default) {
+                engine.dbsrEngine.preload()
+            }
+        }
         // Video HDR system removed: permanently OFF
         engine.setVideoHdrMode(VideoHdrMode.OFF)
         engine.setMode(preferences.cameraMode)
@@ -1065,10 +1073,22 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         showToast("Saved preset: ${preset.name}")
     }
 
+    fun applyCustomLayoutConfig(config: ModeLayoutConfig) {
+        val updated = _uiCustomizationState.value.copy(
+            selectedTemplate = UiTemplateType.CUSTOM,
+            globalConfig = config,
+            modeSpecificConfigs = emptyMap()
+        )
+        _uiCustomizationState.value = updated
+        preferences.uiCustomizationState = updated
+        showToast("Custom UI applied to Camera")
+    }
+
     fun loadCustomPreset(preset: CustomUiPreset) {
         val updated = _uiCustomizationState.value.copy(
             selectedTemplate = preset.templateType,
-            globalConfig = preset.config
+            globalConfig = preset.config,
+            modeSpecificConfigs = emptyMap()
         )
         _uiCustomizationState.value = updated
         preferences.uiCustomizationState = updated

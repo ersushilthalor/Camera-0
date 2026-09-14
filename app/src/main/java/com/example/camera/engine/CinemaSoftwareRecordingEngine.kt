@@ -90,7 +90,8 @@ class CinemaSoftwareRecordingEngine(private val context: Context) {
         bitrate: Int,
         codec: CinemaCodec,
         bitDepth: LogBitDepth,
-        isAudioEnabled: Boolean
+        isAudioEnabled: Boolean,
+        orientationHint: Int = 0
     ): Surface {
         outputFile = destFile
         activeCodec = codec
@@ -145,6 +146,12 @@ class CinemaSoftwareRecordingEngine(private val context: Context) {
                     mediaMuxer = MediaMuxer(pfd.fileDescriptor, muxerOutputFormat)
                 } else {
                     mediaMuxer = MediaMuxer(destFile.absolutePath, muxerOutputFormat)
+                }
+                // Set orientation hint so playback in standard players is not rotated 90 degrees
+                try {
+                    mediaMuxer?.setOrientationHint(orientationHint)
+                } catch (e: Exception) {
+                    Log.w(TAG, "Failed to set orientation hint $orientationHint on MediaMuxer: ${e.message}")
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "MediaMuxer construction failed for ${destFile.absolutePath}", e)

@@ -24,9 +24,11 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
@@ -35,6 +37,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import coil.compose.AsyncImage
 import com.example.camera.model.*
 import com.example.camera.ui.components.FrostedGlassBox
 import com.example.camera.viewmodel.CameraViewModel
@@ -261,6 +264,18 @@ fun CameraScreen(
             currentExposureCompensation = exposureCompensation,
             modifier = Modifier.fillMaxSize()
         )
+
+        // 1a. Custom UI Background / Watermark Wallpaper
+        if (!activeLayoutConfig.customUiPhotoUri.isNullOrBlank() && activeLayoutConfig.customUiPhotoOverlayOpacity > 0f) {
+            AsyncImage(
+                model = activeLayoutConfig.customUiPhotoUri,
+                contentDescription = "Custom UI Wallpaper",
+                contentScale = ContentScale.Crop,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .alpha(activeLayoutConfig.customUiPhotoOverlayOpacity)
+            )
+        }
 
         // 1b. Cinema Viewfinder Assist Overlays (Waveform, Peaking, Zebras)
         if (cameraMode == CameraMode.CINEMA) {
@@ -776,9 +791,8 @@ fun CameraScreen(
                 currentCameraMode = cameraMode,
                 onDismiss = { isCustomUiStudioOpen = false },
                 onApplyToCamera = { newConfig ->
-                    viewModel.updateGlobalLayoutConfig(newConfig)
-                    viewModel.selectUiTemplate(UiTemplateType.CUSTOM)
-                    viewModel.showToast("Custom UI applied to Camera")
+                    viewModel.applyCustomLayoutConfig(newConfig)
+                    isCustomUiStudioOpen = false
                 },
                 onSaveCustomPreset = { name, newConfig ->
                     viewModel.saveCustomPreset(name, newConfig)
