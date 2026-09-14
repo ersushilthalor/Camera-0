@@ -663,6 +663,7 @@ fun CameraScreen(
             onCinemaModeClick = { viewModel.toggleCinemaSettings() },
             onSettingsClick = { viewModel.setSettingsOpen(true) },
             onTimerClick = { viewModel.cycleTimerMode() },
+            superResProgress = superResProgress,
             layoutConfig = activeLayoutConfig.copy(
                 showZoomCapsule = activeLayoutConfig.showZoomCapsule && !isAnyWindowOpen
             ),
@@ -811,68 +812,6 @@ fun CameraScreen(
                     viewModel.showToast("Preset deleted")
                 }
             )
-        }
-
-        // 9. AI Super Resolution Neural Processing HUD Overlay
-        superResProgress?.let { (progress, status) ->
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(Color(0x88000000))
-                    .padding(24.dp)
-                    .testTag("super_res_progress_overlay"),
-                contentAlignment = Alignment.Center
-            ) {
-                Surface(
-                    shape = RoundedCornerShape(20.dp),
-                    color = Color(0xF0111827),
-                    border = BorderStroke(1.dp, Color(0x336366F1)),
-                    shadowElevation = 12.dp
-                ) {
-                    Column(
-                        modifier = Modifier.padding(horizontal = 28.dp, vertical = 24.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
-                        Text(
-                            text = "AI Super Resolution",
-                            fontSize = 16.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = Color.White
-                        )
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = "${photoMegapixelMode.label} · ${superResBackend.label} · 4 Overlapping Tiles",
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Medium,
-                            color = Color(0xFF818CF8)
-                        )
-                        Spacer(modifier = Modifier.height(12.dp))
-                        Text(
-                            text = status,
-                            fontSize = 12.5.sp,
-                            color = Color(0xFFD1D5DB),
-                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
-                        )
-                        Spacer(modifier = Modifier.height(16.dp))
-                        LinearProgressIndicator(
-                            progress = { progress },
-                            modifier = Modifier
-                                .width(220.dp)
-                                .height(6.dp)
-                                .clip(RoundedCornerShape(3.dp)),
-                            color = Color(0xFF6366F1),
-                            trackColor = Color(0xFF374151)
-                        )
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text(
-                            text = "${(progress * 100).toInt()}%",
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = Color(0xFF818CF8)
-                        )
-                    }
-                }
-            }
         }
     }
 }

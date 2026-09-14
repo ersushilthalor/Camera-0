@@ -228,4 +228,17 @@ class ExampleUnitTest {
         tempFile.delete()
         assertFalse(tempFile.exists())
     }
+
+    @Test
+    fun testRealEsrganModelInspection() {
+        val modelFile = java.io.File("src/main/assets/models/Real-ESRGAN-x4plus.tflite")
+        assertTrue("Model file should exist, size is ${modelFile.length()}", modelFile.exists())
+        assertEquals(67033644L, modelFile.length())
+
+        // Verify TFLite magic header 'TFL3'
+        val header = ByteArray(8)
+        modelFile.inputStream().use { it.read(header) }
+        val magic = String(header, 4, 4, Charsets.US_ASCII)
+        assertEquals("TFL3", magic)
+    }
 }

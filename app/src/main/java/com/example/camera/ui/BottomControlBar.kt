@@ -66,6 +66,7 @@ fun BottomControlBar(
     onCinemaModeClick: (() -> Unit)? = null,
     onSettingsClick: () -> Unit = {},
     onTimerClick: () -> Unit = {},
+    superResProgress: Pair<Float, String>? = null,
     layoutConfig: ModeLayoutConfig = ModeLayoutConfig(),
     modifier: Modifier = Modifier
 ) {
@@ -218,6 +219,15 @@ fun BottomControlBar(
                                         contentDescription = "Gallery",
                                         tint = Color.White,
                                         modifier = Modifier.size(22.dp)
+                                    )
+                                }
+
+                                if (superResProgress != null) {
+                                    CircularProgressIndicator(
+                                        progress = { superResProgress.first },
+                                        color = Color(0xFF6366F1),
+                                        strokeWidth = 2.5.dp,
+                                        modifier = Modifier.fillMaxSize()
                                     )
                                 }
                             }

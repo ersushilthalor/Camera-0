@@ -239,6 +239,27 @@ class Camera2Engine(private val context: Context) {
         videoHdrEngine.onStateChangedListener = { state ->
             _videoHdrState.value = state
         }
+        engineScope.launch {
+            com.example.camera.superres.SuperResForegroundService.lastCompletedJob.collect { result ->
+                _lastCapturedMedia.value = CapturedMedia(
+                    uri = result.uri,
+                    isVideo = false,
+                    timestamp = System.currentTimeMillis(),
+                    displayName = result.displayName
+                )
+                updateStorageStats()
+            }
+        }
+        engineScope.launch {
+            kotlinx.coroutines.flow.combine(
+                com.example.camera.superres.SuperResForegroundService.activeProgress,
+                com.example.camera.superres.SuperResForegroundService.activeStatus
+            ) { progress, status ->
+                if (progress != null && status != null) Pair(progress, status) else null
+            }.collect {
+                _superResProgress.value = it
+            }
+        }
         // ZERO hardware calls during construction/init!
         // Background threads, camera detection, and initialization are performed lazily
         // via safeInitializeCamera() only after CAMERA permission is confirmed.
@@ -2823,7 +2844,6 @@ class Camera2Engine(private val context: Context) {
         }
 
         _isCapturing.value = true
-        _superResProgress.value = Pair(0.02f, "Capturing high-resolution sensor frame...")
         val activeLens = _selectedLens.value
         val isFrontFacing = activeLens?.facing == CameraCharacteristics.LENS_FACING_FRONT
 
@@ -2864,6 +2884,12 @@ class Camera2Engine(private val context: Context) {
                     val bytes = ByteArray(buffer.remaining())
                     buffer.get(bytes)
                     image.close()
+
+                    // Unblock viewfinder immediately!
+                    _isCapturing.value = false
+                    engineScope.launch(Dispatchers.Main) {
+                        onComplete(null)
+                    }
 
                     val options = BitmapFactory.Options().apply {
                         inMutable = true
@@ -2912,43 +2938,36 @@ class Camera2Engine(private val context: Context) {
                             rawBitmap
                         }
 
-                        engineScope.launch(Dispatchers.Default) {
-                            val uri = realEsrganEngine.processAndSaveSuperRes(
-                                source = uprightBitmap,
+                        // Write to cache and dispatch to Foreground Service
+                        // Survives app closing or minimization
+                        engineScope.launch(Dispatchers.IO) {
+                            val tempFile = File(context.cacheDir, "superres_pending_${System.currentTimeMillis()}.jpg")
+                            try {
+                                java.io.FileOutputStream(tempFile).use { out ->
+                                    uprightBitmap.compress(Bitmap.CompressFormat.JPEG, 98, out)
+                                    out.flush()
+                                }
+                            } catch (e: Exception) {
+                                Log.e(TAG, "Failed to write temp cache file for SuperRes service", e)
+                            } finally {
+                                if (!uprightBitmap.isRecycled) {
+                                    uprightBitmap.recycle()
+                                }
+                            }
+
+                            com.example.camera.superres.SuperResForegroundService.startProcessing(
+                                context = context,
+                                tempFilePath = tempFile.absolutePath,
                                 megapixelMode = photoMegapixelMode,
                                 backend = superResBackend,
-                                memoryLimit = superResMemoryLimit,
-                                onProgress = { progress, status ->
-                                    _superResProgress.value = Pair(progress, status)
-                                }
+                                memoryLimit = superResMemoryLimit
                             )
-                            _isCapturing.value = false
-                            _superResProgress.value = null
-                            updateStorageStats()
-                            if (uri != null) {
-                                _lastCapturedMedia.value = CapturedMedia(
-                                    uri = uri,
-                                    isVideo = false,
-                                    timestamp = System.currentTimeMillis(),
-                                    displayName = "${photoMegapixelMode.label}_AI_SR.jpg"
-                                )
-                            }
-                            withContext(Dispatchers.Main) {
-                                onComplete(uri)
-                            }
-                        }
-                    } else {
-                        _isCapturing.value = false
-                        _superResProgress.value = null
-                        engineScope.launch(Dispatchers.Main) {
-                            onComplete(null)
                         }
                     }
                 } catch (e: Exception) {
                     Log.e(TAG, "Error acquiring SuperRes frame", e)
                     try { image.close() } catch (ignored: Exception) {}
                     _isCapturing.value = false
-                    _superResProgress.value = null
                     engineScope.launch(Dispatchers.Main) {
                         onComplete(null)
                     }
