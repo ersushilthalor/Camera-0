@@ -207,7 +207,7 @@ class CameraPreferences(context: Context) {
         }
         set(value) = prefs.edit().putString(KEY_VIEWFINDER_RESOLUTION, value.name).apply()
 
-    // Photo Megapixel Mode (12M vs 50M)
+    // Photo Megapixel Mode (12M vs 24M vs 50M vs 100M vs 200M)
     var photoMegapixelMode: com.example.camera.model.PhotoMegapixelMode
         get() {
             val name = prefs.getString("pref_photo_mp_mode", com.example.camera.model.PhotoMegapixelMode.M12.name)
@@ -215,6 +215,24 @@ class CameraPreferences(context: Context) {
             return try { com.example.camera.model.PhotoMegapixelMode.valueOf(name) } catch (e: Exception) { com.example.camera.model.PhotoMegapixelMode.M12 }
         }
         set(value) = prefs.edit().putString("pref_photo_mp_mode", value.name).apply()
+
+    // AI Super Resolution Backend (Auto / CPU / GPU)
+    var superResBackend: com.example.camera.model.SuperResBackend
+        get() {
+            val name = prefs.getString("pref_super_res_backend", com.example.camera.model.SuperResBackend.AUTO.name)
+                ?: com.example.camera.model.SuperResBackend.AUTO.name
+            return try { com.example.camera.model.SuperResBackend.valueOf(name) } catch (e: Exception) { com.example.camera.model.SuperResBackend.AUTO }
+        }
+        set(value) = prefs.edit().putString("pref_super_res_backend", value.name).apply()
+
+    // AI Super Resolution Memory Limit (Auto / 512MB / 1GB / 2GB / 3GB / 4GB)
+    var superResMemoryLimit: com.example.camera.model.SuperResMemoryLimit
+        get() {
+            val name = prefs.getString("pref_super_res_memory_limit", com.example.camera.model.SuperResMemoryLimit.AUTO.name)
+                ?: com.example.camera.model.SuperResMemoryLimit.AUTO.name
+            return try { com.example.camera.model.SuperResMemoryLimit.valueOf(name) } catch (e: Exception) { com.example.camera.model.SuperResMemoryLimit.AUTO }
+        }
+        set(value) = prefs.edit().putString("pref_super_res_memory_limit", value.name).apply()
 
     // Cinema Mode Preferences - Full Persistence across sessions
     var cinemaFps: Int

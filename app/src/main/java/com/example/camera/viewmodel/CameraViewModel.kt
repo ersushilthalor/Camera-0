@@ -151,9 +151,19 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     private val _isCinemaSettingsOpen = MutableStateFlow(false)
     val isCinemaSettingsOpen: StateFlow<Boolean> = _isCinemaSettingsOpen.asStateFlow()
 
-    // Photo Megapixel Mode (12M vs 50M Ultra)
+    // Photo Megapixel Mode (12M vs 24M vs 50M vs 100M vs 200M)
     private val _photoMegapixelMode = MutableStateFlow(preferences.photoMegapixelMode)
     val photoMegapixelMode: StateFlow<PhotoMegapixelMode> = _photoMegapixelMode.asStateFlow()
+
+    // Super Resolution Backend (Auto / CPU / GPU)
+    private val _superResBackend = MutableStateFlow(preferences.superResBackend)
+    val superResBackend: StateFlow<SuperResBackend> = _superResBackend.asStateFlow()
+
+    // Super Resolution Memory Limit (Auto / 512MB / 1GB / 2GB / 3GB / 4GB)
+    private val _superResMemoryLimit = MutableStateFlow(preferences.superResMemoryLimit)
+    val superResMemoryLimit: StateFlow<SuperResMemoryLimit> = _superResMemoryLimit.asStateFlow()
+
+    val superResProgress: StateFlow<Pair<Float, String>?> = engine.superResProgress
 
     // Refocus Photo Mode
     private val _isRefocusPhotoEnabled = MutableStateFlow(preferences.isRefocusPhotoEnabled)
@@ -205,27 +215,39 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         _photoMegapixelMode.value = mode
         preferences.photoMegapixelMode = mode
         engine.photoMegapixelMode = mode
-        if (mode == PhotoMegapixelMode.M50) {
-            showToast("50M Computational Ultra HD")
+        if (mode.isSuperRes) {
+            showToast("${mode.label} AI Super Resolution")
         } else {
             showToast("12M Standard Mode")
         }
     }
 
     fun togglePhotoMegapixelMode() {
-        val next = if (_photoMegapixelMode.value == PhotoMegapixelMode.M12) {
-            PhotoMegapixelMode.M50
-        } else {
-            PhotoMegapixelMode.M12
-        }
+        val modes = PhotoMegapixelMode.entries
+        val currentIndex = modes.indexOf(_photoMegapixelMode.value)
+        val next = modes[(currentIndex + 1) % modes.size]
         _photoMegapixelMode.value = next
         preferences.photoMegapixelMode = next
         engine.photoMegapixelMode = next
-        if (next == PhotoMegapixelMode.M50) {
-            showToast("50M Computational Ultra HD")
+        if (next.isSuperRes) {
+            showToast("${next.label} AI Super Resolution")
         } else {
             showToast("12M Standard Mode")
         }
+    }
+
+    fun setSuperResBackend(backend: SuperResBackend) {
+        _superResBackend.value = backend
+        preferences.superResBackend = backend
+        engine.superResBackend = backend
+        showToast("AI SR Backend: ${backend.label}")
+    }
+
+    fun setSuperResMemoryLimit(limit: SuperResMemoryLimit) {
+        _superResMemoryLimit.value = limit
+        preferences.superResMemoryLimit = limit
+        engine.superResMemoryLimit = limit
+        showToast("AI SR Memory Limit: ${limit.label}")
     }
 
     // More Modes Drawer visibility
@@ -354,6 +376,8 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         engine.saveSelfieAsPreviewed = preferences.saveSelfieAsPreviewed
         engine.viewfinderResolution = preferences.viewfinderResolution
         engine.photoMegapixelMode = preferences.photoMegapixelMode
+        engine.superResBackend = preferences.superResBackend
+        engine.superResMemoryLimit = preferences.superResMemoryLimit
         engine.isRefocusPhotoEnabled = preferences.isRefocusPhotoEnabled
         engine.isAiZoomEnabled = preferences.isAiZoomEnabled
         engine.aiZoomQuality = preferences.aiZoomQuality
@@ -948,14 +972,14 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     private fun executePhotoCapture() {
-        val is50M = _photoMegapixelMode.value == PhotoMegapixelMode.M50
-        if (is50M) {
-            showToast("Processing 50MP Computational photo...")
+        val mode = _photoMegapixelMode.value
+        if (mode.isSuperRes) {
+            showToast("Processing ${mode.label} AI Super Resolution photo...")
         }
         engine.takePhoto { uri ->
             if (uri != null) {
-                if (is50M) {
-                    showToast("50MP Computational photo saved to DCIM/Camera")
+                if (mode.isSuperRes) {
+                    showToast("${mode.label} AI Super Resolution photo saved to DCIM/Camera")
                 } else {
                     showToast("Saved to DCIM/Camera")
                 }

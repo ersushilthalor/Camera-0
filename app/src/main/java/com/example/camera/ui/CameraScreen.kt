@@ -9,6 +9,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -121,6 +122,9 @@ fun CameraScreen(
     val isPortraitSettingsOpen by viewModel.isPortraitSettingsOpen.collectAsStateWithLifecycle()
     val saveSelfieAsPreviewed by viewModel.saveSelfieAsPreviewed.collectAsStateWithLifecycle()
     val photoMegapixelMode by viewModel.photoMegapixelMode.collectAsStateWithLifecycle()
+    val superResBackend by viewModel.superResBackend.collectAsStateWithLifecycle()
+    val superResMemoryLimit by viewModel.superResMemoryLimit.collectAsStateWithLifecycle()
+    val superResProgress by viewModel.superResProgress.collectAsStateWithLifecycle()
     val isRefocusPhotoEnabled by viewModel.isRefocusPhotoEnabled.collectAsStateWithLifecycle()
     val isVideoSettingsPanelOpen by viewModel.isVideoSettingsPanelOpen.collectAsStateWithLifecycle()
 
@@ -675,6 +679,8 @@ fun CameraScreen(
             selectedPhotoResolution = selectedPhotoResolution,
             selectedVideoResolution = selectedVideoResolution,
             photoMegapixelMode = photoMegapixelMode,
+            superResBackend = superResBackend,
+            superResMemoryLimit = superResMemoryLimit,
             isRefocusPhotoEnabled = isRefocusPhotoEnabled,
             isAiZoomEnabled = isAiZoomEnabled,
             aiZoomQuality = aiZoomQuality,
@@ -750,6 +756,8 @@ fun CameraScreen(
             onForceDeepScan = { viewModel.forceDeepScanLenses() },
             onPhotoResolutionSelected = { viewModel.selectPhotoResolution(it) },
             onPhotoMegapixelModeSelected = { viewModel.setPhotoMegapixelMode(it) },
+            onSuperResBackendSelected = { viewModel.setSuperResBackend(it) },
+            onSuperResMemoryLimitSelected = { viewModel.setSuperResMemoryLimit(it) },
             onRefocusPhotoToggle = { viewModel.setRefocusPhotoEnabled(it) },
             onAiZoomToggle = { viewModel.setAiZoomEnabled(it) },
             onAiZoomQualitySelect = { viewModel.setAiZoomQuality(it) },
@@ -803,6 +811,68 @@ fun CameraScreen(
                     viewModel.showToast("Preset deleted")
                 }
             )
+        }
+
+        // 9. AI Super Resolution Neural Processing HUD Overlay
+        superResProgress?.let { (progress, status) ->
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color(0x88000000))
+                    .padding(24.dp)
+                    .testTag("super_res_progress_overlay"),
+                contentAlignment = Alignment.Center
+            ) {
+                Surface(
+                    shape = RoundedCornerShape(20.dp),
+                    color = Color(0xF0111827),
+                    border = BorderStroke(1.dp, Color(0x336366F1)),
+                    shadowElevation = 12.dp
+                ) {
+                    Column(
+                        modifier = Modifier.padding(horizontal = 28.dp, vertical = 24.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Text(
+                            text = "AI Super Resolution",
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "${photoMegapixelMode.label} · ${superResBackend.label} · 4 Overlapping Tiles",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = Color(0xFF818CF8)
+                        )
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Text(
+                            text = status,
+                            fontSize = 12.5.sp,
+                            color = Color(0xFFD1D5DB),
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                        )
+                        Spacer(modifier = Modifier.height(16.dp))
+                        LinearProgressIndicator(
+                            progress = { progress },
+                            modifier = Modifier
+                                .width(220.dp)
+                                .height(6.dp)
+                                .clip(RoundedCornerShape(3.dp)),
+                            color = Color(0xFF6366F1),
+                            trackColor = Color(0xFF374151)
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = "${(progress * 100).toInt()}%",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = Color(0xFF818CF8)
+                        )
+                    }
+                }
+            }
         }
     }
 }

@@ -71,6 +71,8 @@ fun SettingsDrawer(
     selectedPhotoResolution: CameraResolution?,
     selectedVideoResolution: CameraResolution?,
     photoMegapixelMode: PhotoMegapixelMode = PhotoMegapixelMode.M12,
+    superResBackend: SuperResBackend = SuperResBackend.AUTO,
+    superResMemoryLimit: SuperResMemoryLimit = SuperResMemoryLimit.AUTO,
     isRefocusPhotoEnabled: Boolean = false,
     isAiZoomEnabled: Boolean = false,
     aiZoomQuality: com.example.camera.dbsr.AiZoomQuality = com.example.camera.dbsr.AiZoomQuality.AUTO,
@@ -114,6 +116,8 @@ fun SettingsDrawer(
     onForceDeepScan: () -> Unit = {},
     onPhotoResolutionSelected: (CameraResolution) -> Unit = {},
     onPhotoMegapixelModeSelected: (PhotoMegapixelMode) -> Unit = {},
+    onSuperResBackendSelected: (SuperResBackend) -> Unit = {},
+    onSuperResMemoryLimitSelected: (SuperResMemoryLimit) -> Unit = {},
     onRefocusPhotoToggle: (Boolean) -> Unit = {},
     onAiZoomToggle: (Boolean) -> Unit = {},
     onAiZoomQualitySelect: (com.example.camera.dbsr.AiZoomQuality) -> Unit = {},
@@ -290,7 +294,7 @@ fun SettingsDrawer(
                                     SettingsSubPage.CAMERA -> if (saveSelfieAsPreviewed) "Mirror On · $shutterFeedback" else "Standard · $shutterFeedback"
                                     SettingsSubPage.PHOTO -> {
                                         val refocusTag = if (isRefocusPhotoEnabled) " · Refocus ON" else ""
-                                        if (photoMegapixelMode == PhotoMegapixelMode.M50) "50MP Ultra$refocusTag · JPEG $jpegQuality%" else "12MP Standard$refocusTag · JPEG $jpegQuality%"
+                                        "${photoMegapixelMode.label} AI SR$refocusTag · JPEG $jpegQuality%"
                                     }
                                     SettingsSubPage.FEATURES -> if (isAiZoomEnabled) "AI Zoom ON · ${aiZoomQuality.label} Quality" else "AI Zoom OFF · Deep Burst SR"
                                     SettingsSubPage.VIDEO -> "${selectedVideoResolution?.let { "${it.width}x${it.height}" } ?: "4K"} · ${videoFps}fps · $videoCodec"
@@ -365,22 +369,78 @@ fun SettingsDrawer(
                             // 2. PHOTO
                             SettingsSubPage.PHOTO -> {
                                 item {
-                                    SettingsSectionCard(title = "Photo Capture & Quality") {
+                                    SettingsSectionCard(title = "AI Super Resolution & Photo Quality") {
+                                        Text("Output Resolution", fontSize = 13.5.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF1F2937))
+                                        Text("100% aspect ratio preservation with zero cropping", fontSize = 11.5.sp, color = Color(0xFF6B7280))
+                                        Spacer(modifier = Modifier.height(6.dp))
+                                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                            PhotoMegapixelMode.entries.forEach { mode ->
+                                                LightSelectPill(
+                                                    label = mode.label,
+                                                    isSelected = photoMegapixelMode == mode,
+                                                    onClick = { onPhotoMegapixelModeSelected(mode) },
+                                                    modifier = Modifier.weight(1f)
+                                                )
+                                            }
+                                        }
+
+                                        if (photoMegapixelMode.isSuperRes) {
+                                            Spacer(modifier = Modifier.height(10.dp))
+                                            HorizontalDivider(color = Color(0xFFF3F4F6), thickness = 1.dp)
+                                            Spacer(modifier = Modifier.height(8.dp))
+
+                                            Text("Hardware Inference Backend", fontSize = 13.5.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF1F2937))
+                                            Text(superResBackend.description, fontSize = 11.5.sp, color = Color(0xFF6B7280))
+                                            Spacer(modifier = Modifier.height(6.dp))
+                                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                                SuperResBackend.entries.forEach { b ->
+                                                    LightSelectPill(
+                                                        label = b.label,
+                                                        isSelected = superResBackend == b,
+                                                        onClick = { onSuperResBackendSelected(b) },
+                                                        modifier = Modifier.weight(1f)
+                                                    )
+                                                }
+                                            }
+
+                                            Spacer(modifier = Modifier.height(10.dp))
+                                            HorizontalDivider(color = Color(0xFFF3F4F6), thickness = 1.dp)
+                                            Spacer(modifier = Modifier.height(8.dp))
+
+                                            Text("Memory Limit Budget", fontSize = 13.5.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF1F2937))
+                                            Text(superResMemoryLimit.description, fontSize = 11.5.sp, color = Color(0xFF6B7280))
+                                            Spacer(modifier = Modifier.height(6.dp))
+                                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                                SuperResMemoryLimit.entries.take(3).forEach { m ->
+                                                    LightSelectPill(
+                                                        label = m.label,
+                                                        isSelected = superResMemoryLimit == m,
+                                                        onClick = { onSuperResMemoryLimitSelected(m) },
+                                                        modifier = Modifier.weight(1f)
+                                                    )
+                                                }
+                                            }
+                                            Spacer(modifier = Modifier.height(4.dp))
+                                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                                SuperResMemoryLimit.entries.drop(3).forEach { m ->
+                                                    LightSelectPill(
+                                                        label = m.label,
+                                                        isSelected = superResMemoryLimit == m,
+                                                        onClick = { onSuperResMemoryLimitSelected(m) },
+                                                        modifier = Modifier.weight(1f)
+                                                    )
+                                                }
+                                            }
+                                        }
+
+                                        Spacer(modifier = Modifier.height(10.dp))
+                                        HorizontalDivider(color = Color(0xFFF3F4F6), thickness = 1.dp)
+
                                         LightToggleRow(
                                             title = "Refocus Photo",
                                             subtitle = "Multi-plane capture for interactive post-capture focus & 3D parallax",
                                             isChecked = isRefocusPhotoEnabled,
                                             onToggle = { onRefocusPhotoToggle(!isRefocusPhotoEnabled) }
-                                        )
-                                        HorizontalDivider(color = Color(0xFFF3F4F6), thickness = 1.dp)
-                                        LightToggleRow(
-                                            title = "50MP Computational Mode",
-                                            subtitle = "Single-frame native sensor capture with detail synthesis",
-                                            isChecked = photoMegapixelMode == PhotoMegapixelMode.M50,
-                                            onToggle = {
-                                                val next = if (photoMegapixelMode == PhotoMegapixelMode.M50) PhotoMegapixelMode.M12 else PhotoMegapixelMode.M50
-                                                onPhotoMegapixelModeSelected(next)
-                                            }
                                         )
                                         HorizontalDivider(color = Color(0xFFF3F4F6), thickness = 1.dp)
                                         if (capabilities.supportsRaw) {

@@ -33,6 +33,7 @@ import android.util.Size
 import android.util.SizeF
 import android.view.Surface
 import com.example.camera.model.*
+import com.example.camera.superres.RealEsrganEngine
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -218,9 +219,14 @@ class Camera2Engine(private val context: Context) {
     val cinemaCapabilities: StateFlow<CinemaHardwareCapabilities> = _cinemaCapabilities.asStateFlow()
 
     val ultraRes50MStacker = UltraRes50MStacker(context)
+    val realEsrganEngine = RealEsrganEngine(context)
     val refocusEngine = RefocusEngine(context)
     val dbsrEngine = com.example.camera.dbsr.DbsrEngine(context)
     var photoMegapixelMode: PhotoMegapixelMode = PhotoMegapixelMode.M12
+    var superResBackend: SuperResBackend = SuperResBackend.AUTO
+    var superResMemoryLimit: SuperResMemoryLimit = SuperResMemoryLimit.AUTO
+    private val _superResProgress = MutableStateFlow<Pair<Float, String>?>(null)
+    val superResProgress: StateFlow<Pair<Float, String>?> = _superResProgress.asStateFlow()
     var isRefocusPhotoEnabled: Boolean = false
     var isAiZoomEnabled: Boolean = false
     var aiZoomQuality: com.example.camera.dbsr.AiZoomQuality = com.example.camera.dbsr.AiZoomQuality.AUTO
@@ -2305,8 +2311,8 @@ class Camera2Engine(private val context: Context) {
      * Take still photo (JPEG + optional RAW). In 50M mode, triggers single-frame computational 50MP capture.
      */
     fun takePhoto(onComplete: (Uri?) -> Unit) {
-        if (photoMegapixelMode == PhotoMegapixelMode.M50) {
-            takePhoto50M(onComplete)
+        if (photoMegapixelMode.isSuperRes) {
+            takePhotoSuperRes(onComplete)
             return
         }
 
@@ -2797,6 +2803,191 @@ class Camera2Engine(private val context: Context) {
      * The single frame is then processed through an edge-aware, detail-preserving
      * computational upscaling and adaptive denoising pipeline.
      */
+    /**
+     * AI Super Resolution Capture (24MP, 50MP, 100MP, 200MP):
+     * Captures camera frame directly into processing pipeline and enhances with Real-ESRGAN
+     * across 4 overlapping tiles with safe GPU/CPU execution and seamless feather stitching.
+     */
+    fun takePhotoSuperRes(onComplete: (Uri?) -> Unit) {
+        val camera = cameraDevice ?: run {
+            onComplete(null)
+            return
+        }
+        val session = captureSession ?: run {
+            onComplete(null)
+            return
+        }
+        val readerJpeg = imageReaderJpeg ?: run {
+            onComplete(null)
+            return
+        }
+
+        _isCapturing.value = true
+        _superResProgress.value = Pair(0.02f, "Capturing high-resolution sensor frame...")
+        val activeLens = _selectedLens.value
+        val isFrontFacing = activeLens?.facing == CameraCharacteristics.LENS_FACING_FRONT
+
+        try {
+            val captureBuilder = camera.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE)
+            captureBuilder.addTarget(readerJpeg.surface)
+            applyCommonSettings(captureBuilder)
+            captureBuilder.set(CaptureRequest.JPEG_ORIENTATION, getCaptureJpegOrientation())
+            captureBuilder.set(CaptureRequest.JPEG_QUALITY, 100.toByte())
+            captureBuilder.set(CaptureRequest.EDGE_MODE, CaptureRequest.EDGE_MODE_HIGH_QUALITY)
+            captureBuilder.set(CaptureRequest.NOISE_REDUCTION_MODE, CaptureRequest.NOISE_REDUCTION_MODE_HIGH_QUALITY)
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                try {
+                    val chars = getCharacteristics(camera.id)
+                    val sensorCaps = chars?.get(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES) ?: intArrayOf()
+                    if (sensorCaps.contains(CameraMetadata.REQUEST_AVAILABLE_CAPABILITIES_ULTRA_HIGH_RESOLUTION_SENSOR)) {
+                        captureBuilder.set(CaptureRequest.SENSOR_PIXEL_MODE, CameraMetadata.SENSOR_PIXEL_MODE_MAXIMUM_RESOLUTION)
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "Sensor max resolution mode not available", e)
+                }
+            }
+
+            var frameProcessed = false
+
+            readerJpeg.setOnImageAvailableListener({ reader ->
+                val image = reader.acquireLatestImage() ?: return@setOnImageAvailableListener
+                if (frameProcessed) {
+                    try { image.close() } catch (ignored: Exception) {}
+                    return@setOnImageAvailableListener
+                }
+                frameProcessed = true
+                readerJpeg.setOnImageAvailableListener(null, null)
+
+                try {
+                    val buffer = image.planes[0].buffer
+                    val bytes = ByteArray(buffer.remaining())
+                    buffer.get(bytes)
+                    image.close()
+
+                    val options = BitmapFactory.Options().apply {
+                        inMutable = true
+                        inSampleSize = 1
+                        inPreferredConfig = Bitmap.Config.ARGB_8888
+                    }
+                    val rawBitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
+
+                    if (rawBitmap != null) {
+                        val exif = try {
+                            android.media.ExifInterface(java.io.ByteArrayInputStream(bytes))
+                        } catch (e: Exception) {
+                            null
+                        }
+                        val exifOrientation = exif?.getAttributeInt(
+                            android.media.ExifInterface.TAG_ORIENTATION,
+                            android.media.ExifInterface.ORIENTATION_UNDEFINED
+                        ) ?: android.media.ExifInterface.ORIENTATION_UNDEFINED
+
+                        val matrix = Matrix()
+                        when (exifOrientation) {
+                            android.media.ExifInterface.ORIENTATION_ROTATE_90 -> matrix.postRotate(90f)
+                            android.media.ExifInterface.ORIENTATION_ROTATE_180 -> matrix.postRotate(180f)
+                            android.media.ExifInterface.ORIENTATION_ROTATE_270 -> matrix.postRotate(270f)
+                            else -> {
+                                if (rawBitmap.width > rawBitmap.height) {
+                                    val rot = if (isFrontFacing) 270f else 90f
+                                    matrix.postRotate(rot)
+                                }
+                            }
+                        }
+
+                        if (isFrontFacing && saveSelfieAsPreviewed) {
+                            matrix.postScale(-1f, 1f)
+                        }
+
+                        val uprightBitmap = if (!matrix.isIdentity) {
+                            val rotated = Bitmap.createBitmap(
+                                rawBitmap, 0, 0, rawBitmap.width, rawBitmap.height, matrix, true
+                            )
+                            if (rotated != rawBitmap) {
+                                rawBitmap.recycle()
+                            }
+                            rotated
+                        } else {
+                            rawBitmap
+                        }
+
+                        engineScope.launch(Dispatchers.Default) {
+                            val uri = realEsrganEngine.processAndSaveSuperRes(
+                                source = uprightBitmap,
+                                megapixelMode = photoMegapixelMode,
+                                backend = superResBackend,
+                                memoryLimit = superResMemoryLimit,
+                                onProgress = { progress, status ->
+                                    _superResProgress.value = Pair(progress, status)
+                                }
+                            )
+                            _isCapturing.value = false
+                            _superResProgress.value = null
+                            updateStorageStats()
+                            if (uri != null) {
+                                _lastCapturedMedia.value = CapturedMedia(
+                                    uri = uri,
+                                    isVideo = false,
+                                    timestamp = System.currentTimeMillis(),
+                                    displayName = "${photoMegapixelMode.label}_AI_SR.jpg"
+                                )
+                            }
+                            withContext(Dispatchers.Main) {
+                                onComplete(uri)
+                            }
+                        }
+                    } else {
+                        _isCapturing.value = false
+                        _superResProgress.value = null
+                        engineScope.launch(Dispatchers.Main) {
+                            onComplete(null)
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error acquiring SuperRes frame", e)
+                    try { image.close() } catch (ignored: Exception) {}
+                    _isCapturing.value = false
+                    _superResProgress.value = null
+                    engineScope.launch(Dispatchers.Main) {
+                        onComplete(null)
+                    }
+                }
+            }, backgroundHandler)
+
+            session.capture(captureBuilder.build(), object : CameraCaptureSession.CaptureCallback() {
+                override fun onCaptureCompleted(
+                    session: CameraCaptureSession,
+                    request: CaptureRequest,
+                    result: TotalCaptureResult
+                ) {
+                    super.onCaptureCompleted(session, request, result)
+                    Log.d(TAG, "SuperRes sensor frame capture completed")
+                }
+
+                override fun onCaptureFailed(
+                    session: CameraCaptureSession,
+                    request: CaptureRequest,
+                    failure: CaptureFailure
+                ) {
+                    super.onCaptureFailed(session, request, failure)
+                    Log.e(TAG, "SuperRes capture request failed: ${failure.reason}")
+                    _isCapturing.value = false
+                    _superResProgress.value = null
+                    engineScope.launch(Dispatchers.Main) {
+                        onComplete(null)
+                    }
+                }
+            }, backgroundHandler)
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to initiate SuperRes capture", e)
+            _isCapturing.value = false
+            _superResProgress.value = null
+            onComplete(null)
+        }
+    }
+
     fun takePhoto50M(onComplete: (Uri?) -> Unit) {
         val camera = cameraDevice ?: run {
             onComplete(null)
